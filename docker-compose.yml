@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Container 1: PocketBase (Database + Frontend)
+  # ---------------------------------------------------------------------------
+  pocketbase:
+    image: ghcr.io/edsonlcandido/telegram-account-webhook:latest
+    container_name: telegram-webhook-pb
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - internal
+
+  # ---------------------------------------------------------------------------
+  # Container 2: FastAPI + Telethon (Backend Python)
+  # ---------------------------------------------------------------------------
+  fastapi:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: telegram-webhook-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - TG_API_ID=${TG_API_ID}
+      - TG_API_HASH=${TG_API_HASH}
+      - POCKETBASE_URL=http://pocketbase:8090
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pb_data:
