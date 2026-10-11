@@ -7,24 +7,25 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia package.json raiz
-COPY package*.json ./
+# Landing
+COPY apps/landing/package.json apps/landing/
+COPY apps/landing/tsconfig.json apps/landing/
+COPY apps/landing/vite.config.ts apps/landing/
+COPY apps/landing/src apps/landing/src/
+COPY apps/landing/index.html apps/landing/
+COPY apps/landing/tailwind.config.js apps/landing/
+COPY apps/landing/postcss.config.js apps/landing/
+RUN cd apps/landing && npm install && npm run build
 
-# Copia e instala cada workspace separadamente
-COPY apps/landing/package*.json ./apps/landing/
-RUN cd apps/landing && npm install
-
-COPY apps/web/package*.json ./apps/web/
-RUN cd apps/web && npm install
-
-# Copia código fonte
-COPY apps/ ./apps/
-
-# Build landing
-RUN cd apps/landing && npm run build
-
-# Build web app
-RUN cd apps/web && npm run build
+# Web App
+COPY apps/web/package.json apps/web/
+COPY apps/web/tsconfig.json apps/web/
+COPY apps/web/vite.config.ts apps/web/
+COPY apps/web/src apps/web/src/
+COPY apps/web/index.html apps/web/
+COPY apps/web/tailwind.config.js apps/web/
+COPY apps/web/postcss.config.js apps/web/
+RUN cd apps/web && npm install && npm run build
 
 # -----------------------------------------------------------------------------
 FROM alpine:3.19 AS production
