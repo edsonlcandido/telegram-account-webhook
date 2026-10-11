@@ -20,19 +20,14 @@ RUN npm run build:landing --prefix apps/landing
 RUN npm run build:web --prefix apps/web
 
 # -----------------------------------------------------------------------------
-# Production stage: PocketBase
-# -----------------------------------------------------------------------------
 FROM alpine:3.19 AS production
 
 WORKDIR /app
 
-# Instala wget e ca-certificados
-RUN apk add --no-cache wget ca-certificates
-
-# Baixa PocketBase latest do GitHub
-ENV PB_VERSION=0.22.18
-RUN wget -O pocketbase.zip "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip" && \
-    unzip pocketbase.zip pocketbase && \
+# Baixa e extrai PocketBase
+RUN apk add --no-cache curl unzip && \
+    curl -L -o pocketbase.zip https://github.com/pocketbase/pocketbase/releases/download/v0.22.18/pocketbase_0.22.18_linux_amd64.zip && \
+    unzip pocketbase.zip && \
     rm pocketbase.zip && \
     chmod +x pocketbase
 
@@ -40,11 +35,10 @@ RUN wget -O pocketbase.zip "https://github.com/pocketbase/pocketbase/releases/do
 COPY --from=builder /app/apps/landing/dist /app/public
 COPY --from=builder /app/apps/web/dist /app/public/app
 
-# Hooks customizados (cria diretório se não existir)
-RUN mkdir -p /app/pb_hooks
+# Hooks
 COPY pocketbase/pb_hooks /app/pb_hooks
 
-# Pasta para dados (volume externo)
+# Dados
 VOLUME ["/app/pb_data"]
 
 EXPOSE 8090
