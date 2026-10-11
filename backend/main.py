@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from telethon import TelegramClient
-from telethon.events import NewMessage, NewMessage.Event
+from telethon.events import NewMessage
 from telethon.sessions import StringSession
 
 import httpx
@@ -114,7 +114,7 @@ def delete_session_file(session_id: str):
 # Event Handler - Forward para Webhook
 # =============================================================================
 
-async def handle_new_message(event: NewMessage.Event, session_id: str):
+async def handle_new_message(event, session_id: str):
     """Handler que dispara quando chega nova mensagem"""
     try:
         # Busca webhook da sessão
@@ -178,7 +178,7 @@ async def start_client(session_id: str, session_string: str, phone: str):
 
         # Adiciona event handler
         @client.on(NewMessage(incoming=True))
-        async def handler(event: NewMessage.Event):
+        async def handler(event):
             await handle_new_message(event, session_id)
 
         # Armazena cliente ativo
