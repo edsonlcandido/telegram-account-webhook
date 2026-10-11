@@ -1,19 +1,21 @@
 # =============================================================================
 # Dockerfile.Application
 # Sobe: Landing Page + Vue Web App + PocketBase
-# URL: https://telegram-webhook.ehtudo.app/
 # =============================================================================
 
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia todos os package.json (raiz + workspaces)
+# Copia package.json raiz
 COPY package*.json ./
-COPY apps/*/package*.json ./apps/
 
-# Instala TODAS as dependências (devDependencies necessárias para build)
-RUN npm install --include=dev
+# Copia e instala cada workspace separadamente
+COPY apps/landing/package*.json ./apps/landing/
+RUN cd apps/landing && npm install
+
+COPY apps/web/package*.json ./apps/web/
+RUN cd apps/web && npm install
 
 # Copia código fonte
 COPY apps/ ./apps/
