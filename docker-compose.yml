@@ -1,12 +1,20 @@
+# =============================================================================
+# Docker Compose - Desenvolvimento Local
+# Para produção, use os dois Dockerfiles separados no Easypanel
+# =============================================================================
+
 version: "3.8"
 
 services:
   # ---------------------------------------------------------------------------
-  # Container 1: PocketBase (Database + Frontend)
+  # Serviço 1: PocketBase + Frontend (Dockerfile.Application)
+  # Sobe em: http://localhost:8090
   # ---------------------------------------------------------------------------
   pocketbase:
-    image: ghcr.io/edsonlcandido/telegram-account-webhook:latest
-    container_name: telegram-webhook-pb
+    build:
+      context: .
+      dockerfile: Dockerfile.Application
+    container_name: telegram-pb
     restart: unless-stopped
     ports:
       - "8090:8090"
@@ -18,23 +26,25 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - internal
+      - telegram-net
 
   # ---------------------------------------------------------------------------
-  # Container 2: FastAPI + Telethon (Backend Python)
+  # Serviço 2: FastAPI + Telethon (Dockerfile.Telegram)
+  # Sobe em: http://localhost:8000
+  # Usa URL interna do PocketBase
   # ---------------------------------------------------------------------------
-  fastapi:
+  telegram-api:
     build:
       context: .
-      dockerfile: backend/Dockerfile
-    container_name: telegram-webhook-api
+      dockerfile: backend/Dockerfile.Telegram
+    container_name: telegram-api
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      - TG_API_ID=${TG_API_ID}
-      - TG_API_HASH=${TG_API_HASH}
-      - POCKETBASE_URL=http://pocketbase:8090
+      - POCKETBASE_URL=http://pocketbase:8090  # URL interna (mesma rede Docker)
+      - TG_API_ID=${TG_API_ID:-0}
+      - TG_API_HASH=${TG_API_HASH:-}
     depends_on:
       pocketbase:
         condition: service_healthy
@@ -44,10 +54,10 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - internal
+      - telegram-net
 
 networks:
-  internal:
+  telegram-net:
     driver: bridge
 
 volumes:

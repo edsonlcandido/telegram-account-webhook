@@ -6,10 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Job 1: Build e push imagem Docker (PocketBase)
-  # ---------------------------------------------------------------------------
-  build-pb:
+  # ==========================================================================
+  # Job 1: Build e push imagem Application (PocketBase + Frontend)
+  # Deploy: https://telegram-webhook.ehtudo.app/
+  # ==========================================================================
+  build-application:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,22 +25,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push PocketBase image
+      - name: Build and push Application image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.Application
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/pocketbase:latest
-            ghcr.io/${{ github.repository }}/pocketbase:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/application:latest
+            ghcr.io/${{ github.repository }}/application:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---------------------------------------------------------------------------
-  # Job 2: Build e push imagem Docker (FastAPI)
-  # ---------------------------------------------------------------------------
-  build-api:
+  # ==========================================================================
+  # Job 2: Build e push imagem Telegram (FastAPI + Telethon)
+  # URL interna: http://telegram-api:8000
+  # ==========================================================================
+  build-telegram:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,28 +56,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push FastAPI image
+      - name: Build and push Telegram API image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./backend/Dockerfile
+          file: ./backend/Dockerfile.Telegram
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/api:latest
-            ghcr.io/${{ github.repository }}/api:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/telegram:latest
+            ghcr.io/${{ github.repository }}/telegram:${{ github.sha }}
           build-args: |
             TG_API_ID=${{ secrets.TG_API_ID }}
             TG_API_HASH=${{ secrets.TG_API_HASH }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---------------------------------------------------------------------------
-  # Job 3: Notificar webhook de deploy (Easypanel)
-  # ---------------------------------------------------------------------------
-  notify-deploy:
-    needs: [build-pb, build-api]
+  # ==========================================================================
+  # Job 3: Deploy no Easypanel (após os dois builds)
+  # ==========================================================================
+  deploy:
+    needs: [build-application, build-telegram]
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Easypanel Deploy
+      - name: Trigger Easypanel Application Deploy
         run: |
-          curl -X POST "${{ secrets.EASYPANEL_DEPLOY_URL }}"
+          curl -X POST "${{ secrets.EASYPANEL_APPLICATION_WEBHOOK }}"
+
+      - name: Trigger Easypanel Telegram API Deploy
+        run: |
+          curl -X POST "${{ secrets.EASYPANEL_TELEGRAM_WEBHOOK }}"
