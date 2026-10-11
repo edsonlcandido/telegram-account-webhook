@@ -20,24 +20,37 @@ RUN npm run build:landing --prefix apps/landing
 RUN npm run build:web --prefix apps/web
 
 # -----------------------------------------------------------------------------
-FROM pocketbase/pocketbase:latest AS production
+# Production stage: PocketBase
+# -----------------------------------------------------------------------------
+FROM alpine:3.19 AS production
 
 WORKDIR /app
 
-# Copia arquivos estáticos
-COPY --from=builder /app/apps/landing/dist /pb_public
-COPY --from=builder /app/apps/web/dist /pb_public/app
+# Instala wget e ca-certificados
+RUN apk add --no-cache wget ca-certificates
 
-# Hooks customizados
-COPY pocketbase/pb_hooks /pb_hooks
+# Baixa PocketBase latest do GitHub
+ENV PB_VERSION=0.22.18
+RUN wget -O pocketbase.zip "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip" && \
+    unzip pocketbase.zip pocketbase && \
+    rm pocketbase.zip && \
+    chmod +x pocketbase
+
+# Copia frontend buildado
+COPY --from=builder /app/apps/landing/dist /app/public
+COPY --from=builder /app/apps/web/dist /app/public/app
+
+# Hooks customizados (cria diretório se não existir)
+RUN mkdir -p /app/pb_hooks
+COPY pocketbase/pb_hooks /app/pb_hooks
 
 # Pasta para dados (volume externo)
-VOLUME ["/pb_data"]
+VOLUME ["/app/pb_data"]
 
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8090/api/health || exit 1
 
-ENTRYPOINT ["/pocketbase"]
-CMD ["serve", "--http=0.0.0.0:8090"]
+ENTRYPOINT ["/app/pocketbase"]
+CMD ["serve", "--http=0.0.0.0:8090", "--dirs=/app/public"]
