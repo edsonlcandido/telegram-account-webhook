@@ -8,16 +8,21 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Dependências npm
+# Copia todos os package.json (raiz + workspaces)
 COPY package*.json ./
+COPY apps/*/package*.json ./apps/
+
+# Instala todas as dependências (incluindo workspaces)
 RUN npm ci
 
-# Código fonte
+# Copia código fonte
 COPY apps/ ./apps/
 
-# Build landing + web app
-RUN npm run build:landing --prefix apps/landing
-RUN npm run build:web --prefix apps/web
+# Build landing
+RUN cd apps/landing && npm run build
+
+# Build web app
+RUN cd apps/web && npm run build
 
 # -----------------------------------------------------------------------------
 FROM alpine:3.19 AS production
