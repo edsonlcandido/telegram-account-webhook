@@ -1,140 +1,147 @@
-# Telegram Account Webhook - Agent Guide
+# Telegram Account Webhook
 
-## Overview
+Sistema para conectar contas Telegram e enviar mensagens em tempo real via webhook.
 
-Sistema para vincular contas Telegram e receber mensagens via webhook.
-
-## Architecture
+## Arquitetura
 
 ```
-Usuário → Frontend (Vue) → Backend (Python) → Telegram API
-                          ↓
-                    PocketBase (store)
-                          ↓
-                    Webhook (cliente)
+Usuário → Frontend (Vue) → Backend (FastAPI) → Telegram API (Telethon)
+                                       ↓
+                              Webhook → Cliente (seu servidor)
 ```
 
 ## Stack
 
 - **Frontend**: Vue 3 + TypeScript + Vite
 - **Backend**: Python + FastAPI + Telethon
-- **Database**: PocketBase (https://iptv.ehtudo.app)
+- **Auth**: JWT tokens (gerados no backend)
 
-## Project Structure
+## Projeto NÃO usa PocketBase
+
+Este é um projeto independente. Não usa banco de dados externo.
+Os dados são armazenados em memória (RAM) no backend + arquivos de sessão do Telethon.
+
+## Estrutura
 
 ```
 telegram-account-webhook/
-├── src/                          # Vue Frontend
-│   ├── main.ts                   # Entry point
-│   ├── App.vue                   # Root component (tabs navigation)
-│   ├── api/index.ts              # API clients (PocketBase + Backend)
-│   ├── types/index.ts            # TypeScript interfaces
-│   ├── composables/
-│   │   └── useTelegram.ts        # Auth & account management
-│   └── components/
-│       ├── AccountForm.vue       # Link Telegram account (phone + api_id/hash)
-│       ├── SessionList.vue       # List linked accounts
-│       └── WebhookConfig.vue     # Configure webhook URL + filter
+├── src/                          # Frontend Vue
+│   ├── main.ts
+│   ├── App.vue                   # Landing page + Dashboard
+│   ├── views/
+│   │   ├── LandingView.vue       # Landing page (descrição do serviço)
+│   │   └── DashboardView.vue    # Painel após login
+│   ├── components/
+│   │   ├── AccountForm.vue      # Vincular conta Telegram
+│   │   ├── SessionList.vue      # Lista de contas
+│   │   └── WebhookConfig.vue    # Configurar webhook
+│   ├── api/
+│   │   └── index.ts             # API client (backend)
+│   ├── types/
+│   │   └── index.ts
+│   └── composables/
+│       └── useTelegram.ts
 ├── backend/
-│   ├── main.py                   # FastAPI app (routes)
-│   ├── telethon_manager.py       # Telethon client management
-│   └── webhook_sender.py         # HTTP webhook delivery
-├── index.html
-├── package.json
+│   ├── main.py                  # FastAPI app
+│   ├── telethon_manager.py      # Gerencia sessões Telethon
+│   ├── webhook_sender.py        # Envia mensagens para webhook
+│   └── auth.py                  # JWT authentication
 ├── Dockerfile
 └── AGENTS.md
 ```
 
-## Features
+## Funcionalidades
 
-- ✅ Vincular conta Telegram via api_id/api_hash
-- ✅ Verificação em 2 fatores
-- ✅ Configurar webhook para receber mensagens
-- ✅ Filtrar por tipo de chat (pessoal/grupo/canal)
-- ✅ Testar webhook
-- ✅ Gerenciar múltiplas contas
+- ✅ Vincular conta Telegram via phone + api_id/api_hash
+- ✅ Verificação em 2 fatores (código SMS/Telegram)
+- ✅ Configurar URL de webhook
+- ✅ Filtrar por tipo: pessoal, grupo, canal, todos
+- ✅ Testar se webhook está respondendo
+- ✅ Múltiplas contas por usuário
+- ✅ Landing page para apresentar o serviço
 
-## Environment Variables
+## Fluxo de Uso
 
-### Backend (.env)
-```env
-POCKETBASE_URL=https://iptv.ehtudo.app
-POCKETBASE_TOKEN=***
-SESSION_DIR=/app/sessions
-```
+1. Usuário acessa landing page
+2. Faz login/cadastro (simples, sem banco)
+3. Vincula conta Telegram
+4. Recebe código no Telegram/SMS
+5. Configura URL do webhook
+6. Sistema começa a enviar mensagens em tempo real
 
-### Frontend (.env)
-```env
-VITE_PB_URL=https://iptv.ehtudo.app
-VITE_PB_TOKEN=***
-VITE_BACKEND_URL=http://localhost:8000
-```
+## API Endpoints (Backend)
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | /api/auth/send-code | Send verification code |
-| POST | /api/auth/verify | Verify code and create session |
-| GET | /api/session/status | Session status |
-| POST | /api/webhook/configure | Configure webhook |
-| POST | /api/webhook/test | Test webhook |
-| POST | /api/session/disconnect | Disconnect session |
+| Method | Endpoint | Descrição |
+|--------|----------|-----------|
+| POST | /api/auth/register | Cadastro simples |
+| POST | /api/auth/login | Login (retorna JWT) |
+| POST | /api/telegram/send-code | Envia código Telegram |
+| POST | /api/telegram/verify | Verifica código |
+| GET | /api/telegram/accounts | Lista contas do usuário |
+| DELETE | /api/telegram/accounts/:id | Remove conta |
+| POST | /api/webhook/configure | Configura webhook |
+| POST | /api/webhook/test | Testa webhook |
 | GET | /health | Health check |
 
-## PocketBase Collections
+## Payload Enviado ao Webhook
 
-- `telegram_accounts`: Stores account credentials
-- `telegram_sessions`: Session metadata
-- `telegram_webhooks`: Webhook configurations
-- `telegram_messages`: Received messages
+```json
+{
+  "event": "new_message",
+  "account_id": "user_123",
+  "chat_id": -100123456,
+  "chat_name": "Nome do Grupo",
+  "chat_type": "grupo",
+  "message_id": 123,
+  "from_name": "João Silva",
+  "from_id": 999,
+  "text": "Olá!",
+  "date": "2024-01-15T10:30:00Z",
+  "has_media": false
+}
+```
 
-## Key Files
+## Configuração Telethon
 
-### Frontend Components
+O Telethon usa:
+- `api_id` e `api_hash` (obtidos em https://my.telegram.org)
+- Arquivos de sessão salvos em `/app/sessions/`
+- Scopes:读取 mensajes,enviar mensajes
 
-1. **AccountForm.vue**: 3-step wizard
-   - Step 1: Enter phone + api_id + api_hash
-   - Step 2: Enter verification code
-   - Step 3: Success
-
-2. **SessionList.vue**: Displays linked accounts with delete option
-
-3. **WebhookConfig.vue**: Configure webhook URL + chat type filter
-
-### Backend (telethon_manager.py)
-
-- Manages Telethon client sessions
-- Handles auth flow (send_code → verify_code)
-- Monitors messages and forwards to webhook
-- In-memory session storage
-
-## Development
+## Desenvolvimento
 
 ```bash
-# Frontend
-npm install
-npm run dev
-
 # Backend
 cd backend
 pip install -r requirements.txt
 python main.py
+
+# Frontend
+npm install
+npm run dev
 ```
 
-## Deploy
+## Deploy (Docker)
 
-Webhook endpoint for auto-deploy:
+```bash
+docker build -t telegram-webhook .
+docker run -p 8000:8000 -v ./sessions:/app/sessions telegram-webhook
 ```
-http://82.112.244.9:3000/api/deploy/d08148ad7475ab169bc6b4baac629cc1c0e18c900b11d525
+
+## Variáveis de Ambiente
+
+```env
+# Backend
+JWT_SECRET=your-secret-key
+SESSION_DIR=/app/sessions
+
+# Frontend  
+VITE_API_URL=http://localhost:8000
 ```
 
-Push to `main` branch triggers deploy automatically.
+## Importante
 
-## Important Notes
-
-1. Sessions stored in `/app/sessions` directory (Docker volume)
-2. Backend runs on port 8000
-3. CORS enabled for all origins
-4. Webhook filter types: `pessoal`, `grupo`, `canal`, `all`
-5. Telegram API credentials required from https://my.telegram.org
+- Sistema stateless (sem banco de dados)
+- Sessões Telethon persistidas em disco
+- JWT para autenticação simples
+- Webhook é only-envio (não recebe comandos de volta)
