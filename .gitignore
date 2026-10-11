@@ -44,3 +44,5 @@ Thumbs.db
 coverage
 .nyc_output
 pnpm-lock.yaml
+__pycache__/
+*.pyc
