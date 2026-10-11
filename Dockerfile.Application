@@ -12,8 +12,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY apps/*/package*.json ./apps/
 
-# Instala todas as dependências (incluindo workspaces)
-RUN npm ci
+# Instala TODAS as dependências (devDependencies necessárias para build)
+RUN npm install --include=dev
 
 # Copia código fonte
 COPY apps/ ./apps/
