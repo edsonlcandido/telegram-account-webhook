@@ -6,20 +6,16 @@ Sistema para conectar contas Telegram e enviar mensagens em tempo real via webho
 
 ```
 Usuário → Frontend (Vue) → Backend (FastAPI) → Telegram API (Telethon)
-                                       ↓
-                              Webhook → Cliente (seu servidor)
+                          ↓                          ↓
+                    PocketBase (auth + dados)  Webhook → Cliente
 ```
 
 ## Stack
 
 - **Frontend**: Vue 3 + TypeScript + Vite
 - **Backend**: Python + FastAPI + Telethon
-- **Auth**: JWT tokens (gerados no backend)
-
-## Projeto NÃO usa PocketBase
-
-Este é um projeto independente. Não usa banco de dados externo.
-Os dados são armazenados em memória (RAM) no backend + arquivos de sessão do Telethon.
+- **Database**: PocketBase (instância separada deste projeto)
+- **Auth**: JWT tokens
 
 ## Estrutura
 
@@ -29,14 +25,14 @@ telegram-account-webhook/
 │   ├── main.ts
 │   ├── App.vue                   # Landing page + Dashboard
 │   ├── views/
-│   │   ├── LandingView.vue       # Landing page (descrição do serviço)
-│   │   └── DashboardView.vue    # Painel após login
+│   │   ├── LandingView.vue       # Landing page
+│   │   └── DashboardView.vue    # Painel do usuário
 │   ├── components/
 │   │   ├── AccountForm.vue      # Vincular conta Telegram
 │   │   ├── SessionList.vue      # Lista de contas
 │   │   └── WebhookConfig.vue    # Configurar webhook
 │   ├── api/
-│   │   └── index.ts             # API client (backend)
+│   │   └── index.ts             # API client
 │   ├── types/
 │   │   └── index.ts
 │   └── composables/
@@ -45,25 +41,36 @@ telegram-account-webhook/
 │   ├── main.py                  # FastAPI app
 │   ├── telethon_manager.py      # Gerencia sessões Telethon
 │   ├── webhook_sender.py        # Envia mensagens para webhook
-│   └── auth.py                  # JWT authentication
+│   └── auth.py                  # JWT + integração PocketBase
+├── pocketbase/                   # PocketBase standalone
+│   └── pb_data/                 # Dados do banco
 ├── Dockerfile
 └── AGENTS.md
 ```
 
 ## Funcionalidades
 
+- ✅ Landing page para apresentar o serviço
+- ✅ Cadastro/login de usuários (via PocketBase)
 - ✅ Vincular conta Telegram via phone + api_id/api_hash
 - ✅ Verificação em 2 fatores (código SMS/Telegram)
-- ✅ Configurar URL de webhook
+- ✅ Configurar URL de webhook por conta
 - ✅ Filtrar por tipo: pessoal, grupo, canal, todos
 - ✅ Testar se webhook está respondendo
 - ✅ Múltiplas contas por usuário
-- ✅ Landing page para apresentar o serviço
+
+## Coleções PocketBase
+
+- `users`: Usuários do sistema (auth)
+- `telegram_accounts`: Contas vinculadas
+  - user_id, phone, api_id, api_hash, is_authorized
+- `webhooks`: Configurações de webhook
+  - account_id, webhook_url, filter_tipo, active
 
 ## Fluxo de Uso
 
 1. Usuário acessa landing page
-2. Faz login/cadastro (simples, sem banco)
+2. Faz cadastro/login
 3. Vincula conta Telegram
 4. Recebe código no Telegram/SMS
 5. Configura URL do webhook
@@ -73,11 +80,11 @@ telegram-account-webhook/
 
 | Method | Endpoint | Descrição |
 |--------|----------|-----------|
-| POST | /api/auth/register | Cadastro simples |
+| POST | /api/auth/register | Cadastro |
 | POST | /api/auth/login | Login (retorna JWT) |
 | POST | /api/telegram/send-code | Envia código Telegram |
 | POST | /api/telegram/verify | Verifica código |
-| GET | /api/telegram/accounts | Lista contas do usuário |
+| GET | /api/telegram/accounts | Lista contas |
 | DELETE | /api/telegram/accounts/:id | Remove conta |
 | POST | /api/webhook/configure | Configura webhook |
 | POST | /api/webhook/test | Testa webhook |
@@ -88,7 +95,7 @@ telegram-account-webhook/
 ```json
 {
   "event": "new_message",
-  "account_id": "user_123",
+  "account_id": "acc_123",
   "chat_id": -100123456,
   "chat_name": "Nome do Grupo",
   "chat_type": "grupo",
@@ -101,12 +108,21 @@ telegram-account-webhook/
 }
 ```
 
-## Configuração Telethon
+## Variáveis de Ambiente
 
-O Telethon usa:
-- `api_id` e `api_hash` (obtidos em https://my.telegram.org)
-- Arquivos de sessão salvos em `/app/sessions/`
-- Scopes:读取 mensajes,enviar mensajes
+### Backend (.env)
+```env
+POCKETBASE_URL=https://telegram-webhook.seu-dominio.com
+POCKETBASE_TOKEN=***
+JWT_SECRET=your-secret-key
+SESSION_DIR=/app/sessions
+```
+
+### Frontend (.env)
+```env
+VITE_API_URL=http://localhost:8000
+VITE_PB_URL=https://telegram-webhook.seu-dominio.com
+```
 
 ## Desenvolvimento
 
@@ -119,29 +135,22 @@ python main.py
 # Frontend
 npm install
 npm run dev
+
+# PocketBase
+./pocketbase serve
 ```
 
-## Deploy (Docker)
+## Deploy
 
+### Docker (tudo junto)
 ```bash
 docker build -t telegram-webhook .
-docker run -p 8000:8000 -v ./sessions:/app/sessions telegram-webhook
-```
-
-## Variáveis de Ambiente
-
-```env
-# Backend
-JWT_SECRET=your-secret-key
-SESSION_DIR=/app/sessions
-
-# Frontend  
-VITE_API_URL=http://localhost:8000
+docker run -p 8000:8000 -p 8090:8090 -v ./data:/pb_data -v ./sessions:/app/sessions telegram-webhook
 ```
 
 ## Importante
 
-- Sistema stateless (sem banco de dados)
-- Sessões Telethon persistidas em disco
-- JWT para autenticação simples
-- Webhook é only-envio (não recebe comandos de volta)
+- PocketBase é standalone para este projeto
+- Sessões Telethon persistidas em `/app/sessions/`
+- JWT para autenticação backend ↔ frontend
+- Webhook é only-envio (não recebe comandos)
