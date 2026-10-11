@@ -1,0 +1,37 @@
+{
+    "name": "pocketbase-vue-tailwind-template",
+    "version": "1.0.0",
+    "description": "Template para projetos com PocketBase + Vue + TypeScript + Tailwind CSS",
+    "private": true,
+    "type": "module",
+    "engines": {
+        "node": ">=20.19.0"
+    },
+    "workspaces": [
+        "apps/*"
+    ],
+    "scripts": {
+        "dev:pb": "node scripts/pocketbase.js",
+        "dev:landing": "cd apps/landing && npm run dev -- --port 5173",
+        "dev:web": "cd apps/web && npm run dev -- --port 5174",
+        "dev": "concurrently -k -n PB,LANDING,WEB -c blue,green,magenta \"npm:dev:pb\" \"npm:dev:landing\" \"npm:dev:web\"",
+        "build:landing": "cd apps/landing && npm run build",
+        "build:web": "cd apps/web && npm run build",
+        "copy:landing": "node scripts/copy-landing.js",
+        "copy:app": "node scripts/copy-app.js",
+        "build": "npm run build:landing && npm run copy:landing && npm run build:web && npm run copy:app",
+        "preview": "cd pocketbase && ./pocketbase serve --http=0.0.0.0:8090"
+    },
+    "keywords": [
+        "pocketbase",
+        "vue",
+        "typescript",
+        "tailwind",
+        "template"
+    ],
+    "author": "",
+    "license": "MIT",
+    "devDependencies": {
+        "concurrently": "^9.2.1"
+    }
+}

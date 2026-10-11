@@ -1,0 +1,55 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Build outputs
+apps/web/dist
+apps/landing/dist
+
+# Development
+.env.development
+.env.local
+*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+docs
+
+# CI/CD
+.github
+
+# Logs
+logs
+*.log
+
+# PocketBase data (será volume)
+pocketbase/pb_data/data.db*
+pocketbase/pb_data/logs.db*
+pocketbase/pb_data/backups
+pocketbase/pb_data/storage
+
+# Manter o binário do PocketBase
+!pocketbase/pocketbase
+
+# Scripts
+scripts

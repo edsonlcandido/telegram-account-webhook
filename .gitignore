@@ -1,0 +1,46 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+yarn.lock
+.pnpm-debug.log
+
+# Build outputs
+apps/*/dist
+dist
+build
+
+# Environment
+.env
+.env.local
+*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# PocketBase
+pocketbase/pocketbase
+pocketbase/pocketbase.exe
+pocketbase/pb_data/*
+!pocketbase/pb_data/.gitkeep
+!pocketbase/pb_data/types.d.ts
+pocketbase/pb_public/*
+!pocketbase/pb_public/.gitkeep
+
+# Logs
+logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage
+.nyc_output
+pnpm-lock.yaml
