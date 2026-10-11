@@ -1,32 +1,44 @@
 """
 FastAPI Backend - Telegram Account Webhook
-Gerencia sessões Telethon e forwards para webhooks dos clientes
+Gerencia sessões Telethon e forwards mensagens para webhooks dos clientes
 """
 
 import os
+import json
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from pathlib import Path
+from datetime import datetime
 from typing import Dict, Optional
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from telethon import TelegramClient
+from telethon.events import NewMessage, NewMessage.Event
 from telethon.sessions import StringSession
 
 import httpx
 
+# =============================================================================
 # Configuração
+# =============================================================================
+
 API_ID = int(os.getenv("TG_API_ID", "0"))
 API_HASH = os.getenv("TG_API_HASH", "")
 POCKETBASE_URL = os.getenv("POCKETBASE_URL", "http://localhost:8090")
+SESSIONS_DIR = Path("/app/sessions")
+SESSIONS_DIR.mkdir(exist_ok=True)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-# Armazenamento de sessões ativas (em produção, usar Redis ou similar)
-active_sessions: Dict[str, TelegramClient] = {}
+# Armazenamento em memória: session_id -> TelegramClient
+active_clients: Dict[str, TelegramClient] = {}
 
 
 # =============================================================================
@@ -52,63 +64,177 @@ class DeleteSessionRequest(BaseModel):
     session_id: str
 
 
-class MessagePayload(BaseModel):
-    chat_id: int
-    message_id: int
-    text: str
-    sender_name: Optional[str] = None
-    sender_id: Optional[int] = None
-    timestamp: Optional[str] = None
+# =============================================================================
+# Persistência de Sessões
+# =============================================================================
+
+def get_session_file(session_id: str) -> Path:
+    """Retorna o caminho do arquivo de sessão"""
+    return SESSIONS_DIR / f"{session_id}.session"
+
+
+def save_session(session_id: str, session_string: str, phone: str, webhook_url: str = None):
+    """Salva sessão no sistema de arquivos"""
+    session_file = get_session_file(session_id)
+    data = {
+        "session_string": session_string,
+        "phone": phone,
+        "webhook_url": webhook_url,
+        "created_at": datetime.now().isoformat()
+    }
+    session_file.write_text(json.dumps(data))
+    logger.info(f"💾 Sessão salva: {session_id}")
+
+
+def load_sessions() -> list:
+    """Carrega todas as sessões salvas"""
+    sessions = []
+    for session_file in SESSIONS_DIR.glob("*.session"):
+        try:
+            data = json.loads(session_file.read_text())
+            session_id = session_file.stem
+            sessions.append({
+                "session_id": session_id,
+                **data
+            })
+        except Exception as e:
+            logger.error(f"Erro ao carregar {session_file}: {e}")
+    return sessions
+
+
+def delete_session_file(session_id: str):
+    """Remove arquivo de sessão"""
+    session_file = get_session_file(session_id)
+    if session_file.exists():
+        session_file.unlink()
+        logger.info(f"🗑️ Arquivo de sessão removido: {session_id}")
 
 
 # =============================================================================
-# Funções Auxiliares
+# Event Handler - Forward para Webhook
 # =============================================================================
 
-async def forward_to_webhook(webhook_url: str, payload: dict) -> bool:
-    """Encaminha mensagem para o webhook do cliente"""
+async def handle_new_message(event: NewMessage.Event, session_id: str):
+    """Handler que dispara quando chega nova mensagem"""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(webhook_url, json=payload)
-            return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Erro ao enviar para webhook {webhook_url}: {e}")
-        return False
+        # Busca webhook da sessão
+        webhook_url = None
+        if session_id in active_clients:
+            session_file = get_session_file(session_id)
+            if session_file.exists():
+                data = json.loads(session_file.read_text())
+                webhook_url = data.get("webhook_url")
 
+        if not webhook_url:
+            logger.debug(f"Sessão {session_id} sem webhook configurado, ignorando")
+            return
 
-async def register_account_in_pb(session_id: str, phone: str, session_string: str):
-    """Registra a conta no PocketBase"""
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{POCKETBASE_URL}/api/collections/accounts/records",
-                json={
-                    "session_id": session_id,
-                    "phone": phone,
-                    "session_string": session_string,
-                    "active": True
-                }
+        # Extrai dados da mensagem
+        message_data = {
+            "session_id": session_id,
+            "chat_id": event.chat_id,
+            "message_id": event.id,
+            "text": event.text or "",
+            "sender_id": event.sender_id,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        # Adiciona nome do remetente se disponível
+        if event.sender:
+            message_data["sender_name"] = (
+                event.sender.first_name or ""
+            ) + (
+                f" {event.sender.last_name}" if event.sender.last_name else ""
             )
+
+        # Forward para webhook
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=message_data)
+            if response.status_code == 200:
+                logger.info(f"📤 Msg #{event.id} de {message_data.get('sender_name', '?')} → webhook OK")
+            else:
+                logger.warning(f"📤 Msg #{event.id} → webhook retornou {response.status_code}")
+
     except Exception as e:
-        logger.error(f"Erro ao registrar no PocketBase: {e}")
+        logger.error(f"Erro ao processar mensagem: {e}")
 
 
 # =============================================================================
-# Lifespan - gerenciacleanup
+# Gerenciamento de Clientes Telethon
+# =============================================================================
+
+async def start_client(session_id: str, session_string: str, phone: str):
+    """Inicia um cliente Telethon com event handler"""
+    client = TelegramClient(
+        StringSession(session_string),
+        API_ID,
+        API_HASH,
+        device_model="Telegram-Webhook-Service"
+    )
+
+    try:
+        await client.start()
+        logger.info(f"✅ Cliente conectado: {session_id} ({phone})")
+
+        # Adiciona event handler
+        @client.on(NewMessage(incoming=True))
+        async def handler(event: NewMessage.Event):
+            await handle_new_message(event, session_id)
+
+        # Armazena cliente ativo
+        active_clients[session_id] = client
+
+        return client
+
+    except Exception as e:
+        logger.error(f"Erro ao iniciar cliente {session_id}: {e}")
+        raise
+
+
+async def initialize_sessions():
+    """Inicializa todas as sessões salvas ao iniciar o servidor"""
+    logger.info("🔄 Carregando sessões salvas...")
+    sessions = load_sessions()
+
+    for session in sessions:
+        try:
+            await start_client(
+                session["session_id"],
+                session["session_string"],
+                session["phone"]
+            )
+        except Exception as e:
+            logger.error(f"Falha ao carregar sessão {session['session_id']}: {e}")
+
+    logger.info(f"📡 {len(active_clients)} sessões ativas")
+
+
+# =============================================================================
+# Lifespan - Inicialização e Cleanup
 # =============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 FastAPI started")
+    logger.info("🚀 FastAPI Starting...")
+
+    # Valida credenciais
+    if API_ID == 0 or not API_HASH:
+        logger.warning("⚠️ TG_API_ID ou TG_API_HASH não configurados!")
+
+    # Inicializa sessões
+    await initialize_sessions()
+
     yield
-    # Cleanup de sessões
-    for session_id, client in active_sessions.items():
+
+    # Cleanup
+    logger.info("👋 FastAPI Shutting down...")
+    for session_id, client in active_clients.items():
         await client.disconnect()
-    logger.info("👋 FastAPI stopped")
+    logger.info("✅ Todas as sessões desconectadas")
 
 
 # =============================================================================
-# App
+# FastAPI App
 # =============================================================================
 
 app = FastAPI(
@@ -117,7 +243,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -134,31 +259,38 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "ok", "active_sessions": len(active_sessions)}
+    return {
+        "status": "ok",
+        "active_sessions": len(active_clients),
+        "api_configured": API_ID != 0 and bool(API_HASH)
+    }
 
 
+# -----------------------------------------------------------------------------
+# 1. Enviar código de verificação
+# -----------------------------------------------------------------------------
 @app.post("/api/send-code")
-async def send_verification_code(request: SendCodeRequest):
+async def send_code(request: SendCodeRequest):
     """
-    Envia código de verificação para o Telegram.
-    Retorna o phone_code_hash necessário para o próximo passo.
+    Envia código de verificação SMS para o número.
+    Retorna phone_code_hash necessário para o próximo passo.
     """
     if API_ID == 0 or not API_HASH:
         raise HTTPException(
             status_code=500,
-            detail="TG_API_ID e TG_API_HASH devem estar configurados"
+            detail="TG_API_ID e TG_API_HASH não configurados"
         )
 
-    session_id = f"temp_{request.phone_number}"
+    session_id = f"pending_{request.phone_number}"
     client = TelegramClient(StringSession(), API_ID, API_HASH)
 
     try:
         await client.start()
         result = await client.send_code_request(request.phone_number)
 
-        # Salva cliente temporariamente
-        active_sessions[session_id] = client
-        active_sessions[f"{session_id}_hash"] = result.phone_code_hash
+        # Salva temporariamente para usar na verificação
+        active_clients[session_id] = client
+        active_clients[f"{session_id}_hash"] = result.phone_code_hash
 
         return {
             "success": True,
@@ -170,21 +302,28 @@ async def send_verification_code(request: SendCodeRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# 2. Verificar código e criar sessão
+# -----------------------------------------------------------------------------
 @app.post("/api/verify-code")
 async def verify_code(request: VerifyCodeRequest, background_tasks: BackgroundTasks):
     """
-    Verifica o código e cria a sessão persistente.
+    Verifica o código, cria sessão persistente e inicia escuta.
     """
-    session_id = f"temp_{request.phone_number}"
+    session_id = f"pending_{request.phone_number}"
     hash_key = f"{session_id}_hash"
 
-    if session_id not in active_sessions or hash_key not in active_sessions:
-        raise HTTPException(status_code=400, detail="Sessão não encontrada. Solicite o código novamente.")
+    if session_id not in active_clients or hash_key not in active_clients:
+        raise HTTPException(
+            status_code=400,
+            detail="Sessão não encontrada. Solicite o código novamente."
+        )
 
-    client = active_sessions[session_id]
-    phone_code_hash = active_sessions[hash_key]
+    client = active_clients[session_id]
+    phone_code_hash = active_clients[hash_key]
 
     try:
+        # Verifica código
         if request.password:
             await client.sign_in(
                 request.phone_number,
@@ -201,69 +340,141 @@ async def verify_code(request: VerifyCodeRequest, background_tasks: BackgroundTa
 
         # Salva sessão
         session_string = client.session.save()
-        final_session_id = f"account_{request.phone_number}"
+        final_session_id = f"account_{request.phone_number.replace('+', '')}"
 
-        # Armazena sessão ativa
-        active_sessions[final_session_id] = client
-        del active_sessions[session_id]
-        del active_sessions[hash_key]
+        # Persiste em arquivo
+        save_session(final_session_id, session_string, request.phone_number)
+
+        # Move cliente para sessão final
+        active_clients[final_session_id] = client
+        del active_clients[session_id]
+        del active_clients[hash_key]
 
         # Registra no PocketBase em background
-        background_tasks.add_task(
-            register_account_in_pb,
-            final_session_id,
-            request.phone_number,
-            session_string
-        )
+        background_tasks.add_task(register_account_pb, final_session_id, request.phone_number, session_string)
 
         return {
             "success": True,
             "session_id": final_session_id,
-            "session_string": session_string
+            "message": "Conta pareada com sucesso!"
         }
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# 3. Configurar webhook para sessão
+# -----------------------------------------------------------------------------
 @app.post("/api/set-webhook")
 async def set_webhook(request: SetWebhookRequest):
     """
-    Configura o webhook para uma sessão.
+    Configura URL do webhook para uma sessão.
     """
-    if request.session_id not in active_sessions:
+    session_id = request.session_id
+
+    # Valida sessão existe
+    if session_id not in active_clients:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
-    # TODO: Implementar handler de eventos para esta sessão
-    return {"success": True, "message": f"Webhook configurado para {request.session_id}"}
+    # Atualiza arquivo de sessão
+    session_file = get_session_file(session_id)
+    if session_file.exists():
+        data = json.loads(session_file.read_text())
+        data["webhook_url"] = request.webhook_url
+        session_file.write_text(json.dumps(data))
+    else:
+        # Cria arquivo se não existir
+        save_session(session_id, "", "", request.webhook_url)
+
+    logger.info(f"🔗 Webhook configurado para {session_id}: {request.webhook_url}")
+
+    return {"success": True, "webhook_url": request.webhook_url}
 
 
-@app.delete("/api/session")
-async def delete_session(request: DeleteSessionRequest):
-    """
-    Remove uma sessão.
-    """
-    if request.session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+# -----------------------------------------------------------------------------
+# 4. Listar sessões
+# -----------------------------------------------------------------------------
+@app.get("/api/sessions")
+async def list_sessions():
+    """Lista todas as sessões (ativas e salvas)"""
+    saved = load_sessions()
 
-    client = active_sessions[request.session_id]
-    await client.disconnect()
-    del active_sessions[request.session_id]
+    return {
+        "sessions": [
+            {
+                "session_id": s["session_id"],
+                "phone": s.get("phone", ""),
+                "webhook_url": s.get("webhook_url"),
+                "active": s["session_id"] in active_clients,
+                "created_at": s.get("created_at")
+            }
+            for s in saved
+        ]
+    }
+
+
+# -----------------------------------------------------------------------------
+# 5. Remover sessão
+# -----------------------------------------------------------------------------
+@app.delete("/api/session/{session_id}")
+async def delete_session(session_id: str):
+    """Remove uma sessão (desconecta e apaga)"""
+    # Desconecta cliente ativo
+    if session_id in active_clients:
+        await active_clients[session_id].disconnect()
+        del active_clients[session_id]
+
+    # Remove arquivo
+    delete_session_file(session_id)
 
     return {"success": True}
 
 
-@app.get("/api/sessions")
-async def list_sessions():
-    """
-    Lista sessões ativas.
-    """
-    return {
-        "sessions": [
-            {"session_id": sid, "connected": client.is_connected()}
-            for sid, client in active_sessions.items()
-            if not sid.endswith("_hash")
-        ]
-    }
+# -----------------------------------------------------------------------------
+# 6. Testar webhook
+# -----------------------------------------------------------------------------
+@app.post("/api/test-webhook")
+async def test_webhook(webhook_url: str, background_tasks: BackgroundTasks):
+    """Envia uma mensagem de teste para o webhook"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                webhook_url,
+                json={
+                    "type": "test",
+                    "message": "Conexão OK!",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            return {
+                "success": response.status_code == 200,
+                "status_code": response.status_code
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =============================================================================
+# Funções Auxiliares
+# =============================================================================
+
+async def register_account_pb(session_id: str, phone: str, session_string: str):
+    """Registra conta no PocketBase"""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{POCKETBASE_URL}/api/collections/telegram_accounts/records",
+                json={
+                    "session_id": session_id,
+                    "phone": phone,
+                    "session_string": session_string,
+                    "active": True
+                }
+            )
+            logger.info(f"📝 Conta registrada no PocketBase: {phone}")
+    except Exception as e:
+        logger.error(f"Erro ao registrar no PocketBase: {e}")
 
 
 # =============================================================================
@@ -272,4 +483,4 @@ async def list_sessions():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
