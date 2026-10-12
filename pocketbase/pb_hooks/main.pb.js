@@ -1,18 +1,7 @@
 /// <reference path="../pb_data/types.d.ts" />
 
-/**
- * SPA Routing - Serve Vue app em /app/*
- * Compatível com PocketBase 0.40.x
- */
+// Landing page na raiz
+routerAdd("GET", "/{path...}", $apis.static("pb_public", false))
 
-routerAdd("GET", "/app/{path...}", function(c) {
-    const path = c.pathParam("path")
-    if (!path || path === "") {
-        return c.staticFile("pb_public/app/index.html")
-    }
-    try {
-        return c.staticFile("pb_public/app/" + path)
-    } catch (e) {
-        return c.staticFile("pb_public/app/index.html")
-    }
-})
+// Web app em /app/*
+routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", false))
