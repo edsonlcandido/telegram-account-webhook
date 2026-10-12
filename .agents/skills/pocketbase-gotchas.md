@@ -9,8 +9,21 @@
 
 ---
 
-## Versão Usada
+## O que aprendemos (trial & error)
+
+### Histórico de erros
+
+1. **Flag errada**: `--dirs` não existe → usar `--publicDir`
+2. **Hook syntax**: `$apis.static()` é o certo (não `c.staticFile()`)
+3. **Wildcard**: `{path?}` não existe → usar `{path...}` (3 pontos)
+4. **Dockerfile npm workspaces**: precisa copiar TODOS os arquivos de config
+5. **Versão antiga**: 0.22.x tem APIs diferentes do 0.40.x
+
+---
+
+## Versão Atual
 - PocketBase 0.40.5 (linux_amd64)
+- Verificar versão com: `./pocketbase --version`
 
 ## Rota Catch-All para SPA
 
