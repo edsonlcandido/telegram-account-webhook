@@ -74,8 +74,6 @@ telegram-account-webhook/
 │   └── skills/
 │       └── pocketbase-gotchas.md # Gotchas PocketBase 0.40.x
 ├── docker-compose.yml             # Desenvolvimento local
-├── .github/workflows/
-│   └── deploy.yml                # CI/CD
 ├── README.md
 └── AGENTS.md
 ```

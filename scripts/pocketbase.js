@@ -19,7 +19,7 @@ const platform = process.platform
 const arch = process.arch
 
 function getPocketBaseURL() {
-  const version = '0.36.2' // Versão do PocketBase
+  const version = '0.40.5' // Versão do PocketBase
   
   let os = ''
   let archSuffix = ''

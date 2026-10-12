@@ -5,6 +5,7 @@ Gerencia sessões Telethon e forwards mensagens para webhooks dos clientes
 
 import os
 import json
+import time
 import asyncio
 import logging
 from pathlib import Path
@@ -12,7 +13,7 @@ from datetime import datetime
 from typing import Dict, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from telethon import TelegramClient
@@ -243,13 +244,71 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# CORS restrito — em produção o frontend e o telegram-api ficam atrás do
+# proxy do Easypanel na mesma origem (sem necessidade de CORS). A env var
+# `ALLOWED_ORIGINS` aceita uma lista CSV pra casos de dev ou domínios
+# específicos (ex.: app.exemplo.com,admin.exemplo.com).
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:8090,http://localhost:5173,http://localhost:5174",
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# =============================================================================
+# Autenticação via token (validado pelo próprio PB via /auth-refresh)
+# =============================================================================
+
+# Cache: token -> (user_dict, expires_at_epoch)
+_auth_cache: Dict[str, tuple] = {}
+AUTH_CACHE_TTL = 300  # 5 minutos
+
+
+async def verify_pb_auth(authorization: str | None = Header(default=None)) -> dict:
+    """
+    Dependency que valida o token PB enviado via header
+    `Authorization: Bearer <jwt>`. Confia no PB como fonte de verdade
+    (chama /api/collections/users/auth-refresh) e cacheia por 5 min pra
+    não martelar o PB a cada request.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Não autenticado")
+
+    token = authorization.split(" ", 1)[1].strip()
+    now = time.time()
+
+    cached = _auth_cache.get(token)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{POCKETBASE_URL}/api/collections/users/auth-refresh",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if resp.status_code != 200:
+            _auth_cache.pop(token, None)
+            raise HTTPException(401, "Token inválido ou expirado")
+        user = resp.json()
+        _auth_cache[token] = (user, now + AUTH_CACHE_TTL)
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Falha ao validar token PB: {e}")
+        raise HTTPException(503, "Serviço de autenticação indisponível")
 
 
 # =============================================================================
@@ -270,7 +329,7 @@ async def health_check():
 # 1. Enviar código de verificação
 # -----------------------------------------------------------------------------
 @app.post("/api/send-code")
-async def send_code(request: SendCodeRequest):
+async def send_code(request: SendCodeRequest, _user: dict = Depends(verify_pb_auth)):
     """
     Envia código de verificação SMS para o número.
     Retorna phone_code_hash necessário para o próximo passo.
@@ -306,7 +365,11 @@ async def send_code(request: SendCodeRequest):
 # 2. Verificar código e criar sessão
 # -----------------------------------------------------------------------------
 @app.post("/api/verify-code")
-async def verify_code(request: VerifyCodeRequest, background_tasks: BackgroundTasks):
+async def verify_code(
+    request: VerifyCodeRequest,
+    background_tasks: BackgroundTasks,
+    _user: dict = Depends(verify_pb_auth),
+):
     """
     Verifica o código, cria sessão persistente e inicia escuta.
     """
@@ -351,7 +414,7 @@ async def verify_code(request: VerifyCodeRequest, background_tasks: BackgroundTa
         del active_clients[hash_key]
 
         # Registra no PocketBase em background
-        background_tasks.add_task(register_account_pb, final_session_id, request.phone_number, session_string)
+        background_tasks.add_task(register_account_pb, final_session_id, request.phone_number)
 
         return {
             "success": True,
@@ -367,7 +430,7 @@ async def verify_code(request: VerifyCodeRequest, background_tasks: BackgroundTa
 # 3. Configurar webhook para sessão
 # -----------------------------------------------------------------------------
 @app.post("/api/set-webhook")
-async def set_webhook(request: SetWebhookRequest):
+async def set_webhook(request: SetWebhookRequest, _user: dict = Depends(verify_pb_auth)):
     """
     Configura URL do webhook para uma sessão.
     """
@@ -396,7 +459,7 @@ async def set_webhook(request: SetWebhookRequest):
 # 4. Listar sessões
 # -----------------------------------------------------------------------------
 @app.get("/api/sessions")
-async def list_sessions():
+async def list_sessions(_user: dict = Depends(verify_pb_auth)):
     """Lista todas as sessões (ativas e salvas)"""
     saved = load_sessions()
 
@@ -418,7 +481,7 @@ async def list_sessions():
 # 5. Remover sessão
 # -----------------------------------------------------------------------------
 @app.delete("/api/session/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth)):
     """Remove uma sessão (desconecta e apaga)"""
     # Desconecta cliente ativo
     if session_id in active_clients:
@@ -435,7 +498,7 @@ async def delete_session(session_id: str):
 # 6. Testar webhook
 # -----------------------------------------------------------------------------
 @app.post("/api/test-webhook")
-async def test_webhook(webhook_url: str = ""):
+async def test_webhook(webhook_url: str = "", _user: dict = Depends(verify_pb_auth)):
     """Envia uma mensagem de teste para o webhook"""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -459,20 +522,35 @@ async def test_webhook(webhook_url: str = ""):
 # Funções Auxiliares
 # =============================================================================
 
-async def register_account_pb(session_id: str, phone: str, session_string: str):
-    """Registra conta no PocketBase"""
+async def register_account_pb(session_id: str, phone: str):
+    """
+    Registra metadata da conta no PocketBase (collection `telegram_sessions`).
+    A StringSession NÃO é enviada — ela fica só no FA em `/app/sessions/*.json`,
+    pois a collection no PB é só pra auditoria/UI (não tem nem deve ter o
+    session_string, que é a credencial real da conta Telegram).
+    """
+    payload = {
+        "session_id": session_id,
+        "phone": phone,
+        "active": True,
+    }
+    if API_ID:
+        payload["api_id"] = API_ID
+    if API_HASH:
+        payload["api_hash"] = API_HASH
+
     try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{POCKETBASE_URL}/api/collections/telegram_accounts/records",
-                json={
-                    "session_id": session_id,
-                    "phone": phone,
-                    "session_string": session_string,
-                    "active": True
-                }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                json=payload,
             )
+        if 200 <= resp.status_code < 300:
             logger.info(f"📝 Conta registrada no PocketBase: {phone}")
+        else:
+            logger.error(
+                f"PB recusou registro de {phone}: {resp.status_code} {resp.text}"
+            )
     except Exception as e:
         logger.error(f"Erro ao registrar no PocketBase: {e}")
 

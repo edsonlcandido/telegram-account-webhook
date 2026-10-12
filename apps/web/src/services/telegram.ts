@@ -1,4 +1,7 @@
-// URL do Telegram API - em produção usa proxy reverso do PocketBase
+import pb from './pocketbase'
+
+// URL relativa: em produção o Easypanel roteia /api/* para o serviço
+// telegram-api; em dev local assume-se o mesmo (proxy do Vite ou PocketBase).
 const apiUrl = ''
 
 // Tipos
@@ -23,111 +26,102 @@ export interface VerifyCodeResponse {
   message: string
 }
 
+// Helper único: injeta o token PB no header `Authorization` em toda chamada.
+// O backend valida via dependency `verify_pb_auth` (consulta /auth-refresh
+// no PB e cacheia por 5 min).
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string> | undefined),
+  }
+
+  if (pb.authStore.token) {
+    headers['Authorization'] = pb.authStore.token
+  }
+
+  const response = await fetch(`${apiUrl}${path}`, {
+    ...init,
+    headers,
+  })
+
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    try {
+      const err = await response.json()
+      if (err && typeof err.detail === 'string') {
+        message = err.detail
+      }
+    } catch {
+      // body não era JSON — mantém a mensagem genérica
+    }
+    throw new Error(message)
+  }
+
+  return (await response.json()) as T
+}
+
 // API Service
 export const telegramApi = {
   /**
    * Envia código de verificação para o telefone
    */
   async sendCode(phone: string): Promise<SendCodeResponse> {
-    const response = await fetch(`${apiUrl}/api/send-code`, {
+    return request<SendCodeResponse>('/api/send-code', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone_number: phone }),
     })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Erro ao enviar código')
-    }
-
-    return response.json()
   },
 
   /**
    * Verifica o código e cria sessão
    */
   async verifyCode(phone: string, code: string): Promise<VerifyCodeResponse> {
-    const response = await fetch(`${apiUrl}/api/verify-code`, {
+    return request<VerifyCodeResponse>('/api/verify-code', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phone_number: phone,
-        code: code,
+        code,
       }),
     })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Erro ao verificar código')
-    }
-
-    return response.json()
   },
 
   /**
    * Lista todas as sessões
    */
   async getSessions(): Promise<{ sessions: TelegramSession[] }> {
-    const response = await fetch(`${apiUrl}/api/sessions`)
-    
-    if (!response.ok) {
-      throw new Error('Erro ao buscar sessões')
-    }
-
-    return response.json()
+    return request<{ sessions: TelegramSession[] }>('/api/sessions')
   },
 
   /**
    * Configura webhook para uma sessão
    */
   async setWebhook(sessionId: string, webhookUrl: string): Promise<{ success: boolean; webhook_url: string }> {
-    const response = await fetch(`${apiUrl}/api/set-webhook`, {
+    return request<{ success: boolean; webhook_url: string }>('/api/set-webhook', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sessionId,
         webhook_url: webhookUrl,
       }),
     })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Erro ao configurar webhook')
-    }
-
-    return response.json()
   },
 
   /**
    * Remove uma sessão
    */
   async deleteSession(sessionId: string): Promise<{ success: boolean }> {
-    const response = await fetch(`${apiUrl}/api/session/${sessionId}`, {
+    return request<{ success: boolean }>(`/api/session/${sessionId}`, {
       method: 'DELETE',
     })
-
-    if (!response.ok) {
-      throw new Error('Erro ao remover sessão')
-    }
-
-    return response.json()
   },
 
   /**
    * Testa um webhook
    */
   async testWebhook(webhookUrl: string): Promise<{ success: boolean; status: number }> {
-    const response = await fetch(`${apiUrl}/api/test-webhook`, {
+    const data = await request<{ success: boolean; status_code: number }>('/api/test-webhook', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ webhook_url: webhookUrl }),
     })
-
-    if (!response.ok) {
-      throw new Error('Erro ao testar webhook')
-    }
-
-    const data = await response.json()
     return { success: data.success, status: data.status_code }
   },
 }
