@@ -123,7 +123,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="grid md:grid-cols-3 gap-8">
         <!-- Step 1 -->
         <div class="relative">
-          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg">1</div>
+          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">1</div>
           <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-purple-200 transition-all hover:-translate-y-2">
             <div class="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mb-6">
               <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -137,7 +137,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <!-- Step 2 -->
         <div class="relative">
-          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg">2</div>
+          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">2</div>
           <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-purple-200 transition-all hover:-translate-y-2">
             <div class="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mb-6">
               <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -151,7 +151,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <!-- Step 3 -->
         <div class="relative">
-          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg">3</div>
+          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">3</div>
           <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-purple-200 transition-all hover:-translate-y-2">
             <div class="w-16 h-16 bg-green-100 rounded-2xl flex items-center justify-center mb-6">
               <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

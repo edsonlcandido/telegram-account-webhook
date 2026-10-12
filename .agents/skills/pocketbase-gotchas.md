@@ -1,31 +1,37 @@
 # PocketBase 0.40.x - JS Routing e Hooks
 
-## Versão Usada
-- PocketBase 0.40.5 (linux_amd64)
+## ⚠️ ATENÇÃO - Leia antes de mexer
 
-## Documentação Oficial
-- JS Overview: https://pocketbase.io/docs/js-overview/
-- JS Routing: https://pocketbase.io/docs/js-routing/
-- JS Event Hooks: https://pocketbase.io/docs/js-event-hooks/
+### NÃO invente sintaxe! Use a documentação oficial.
+
+- **Routing**: https://pocketbase.io/docs/js-routing/
+- **JS Overview**: https://pocketbase.io/docs/js-overview/
 
 ---
 
+## Versão Usada
+- PocketBase 0.40.5 (linux_amd64)
+
 ## Rota Catch-All para SPA
 
-### Sintaxe Correta: `{path...}` (três pontos)
+### Sintaxe Correta: `{path...}` (TRÊS pontos)
 
 O Go usa `{name...}` para capturar múltiplos segmentos.
 
 ```javascript
 // ERRADO - não existe
-routerAdd("GET", "/app/{path?}", ...)
-routerAdd("GET", "/app/{path}", ...)
+routerAdd("GET", "/app/{path?}", ...)  // ❌ bad wildcard name
+routerAdd("GET", "/app/{path}", ...)   // ❌ só captura 1 segmento
 
 // CERTO
-routerAdd("GET", "/app/{path...}", function(e) {
-    // captura /app, /app/, /app/foo, /app/foo/bar
-})
+routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", false))
 ```
+
+| Sintaxe | Significado |
+|---------|-------------|
+| `{path}` | Parâmetro único |
+| `{path...}` | Catch-all (múltiplos segmentos) - **3 pontos** |
+| `{path?}` | **NÃO EXISTE** |
 
 ---
 
@@ -41,7 +47,7 @@ routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", false))
 
 **Parâmetros:**
 - `dirPath`: caminho do diretório (relativo ao working dir)
-- `spaFallback`: `false` = retorna 404 se não encontrar, `true` = retorna index.html (SPA mode)
+- `spaFallback`: `false` = 404 se não encontrar, `true` = retorna index.html (SPA mode)
 
 ---
 
@@ -59,41 +65,6 @@ routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", false))
 
 ---
 
-## Parâmetros de Rota
-
-```javascript
-// Obter valor do parâmetro
-routerAdd("GET", "/users/{id}", function(e) {
-    const id = e.request.pathValue("id")
-    return e.json(200, { userId: id })
-})
-
-// Catch-all (múltiplos segmentos)
-routerAdd("GET", "/static/{path...}", function(e) {
-    const path = e.request.pathValue("path")
-    // path = "css/style.css" para /static/css/style.css
-})
-```
-
----
-
-## Helpers Disponíveis no contexto `e`
-
-```javascript
-// Respostas JSON
-e.json(200, { data: "value" })
-e.json(404, { error: "Not found" })
-
-// Arquivos
-e.fileFS($os.dirFS("/path"), "file.txt")
-
-// static() helper
-$apis.static("pb_public", false)
-$apis.static("pb_public/app", true)
-```
-
----
-
 ## Dockerfile - Versão como ARG
 
 ```dockerfile
@@ -107,21 +78,23 @@ RUN wget https://github.com/pocketbase/pocketbase/releases/download/v${POCKETBAS
 CMD ["./pocketbase", "serve", "--http=0.0.0.0:8090"]
 ```
 
+**⚠️ NÃO usar imagem DockerHub** - não existe `pocketbase/pocketbase`
+
 ---
 
 ## Erros Comuns
 
 ### ❌ `bad wildcard name "path?"`
-- `{path?}` não existe
-- Usar `{path}` para parâmetro único ou `{path...}` para catch-all
+- Causa: `{path?}` não existe no PocketBase/Go
+- Solução: usar `{path}` para parâmetro único ou `{path...}` para catch-all
 
 ### ❌ `Object has no member 'static'`
-- Versão muito antiga do PocketBase (0.22.x)
-- Atualizar para 0.40.x
+- Causa: Versão muito antiga do PocketBase (< 0.30)
+- Solução: Atualizar para 0.40.x
 
-### ❌ Hook não carrega
-- Verificar se arquivo está em `pb_hooks/main.pb.js`
-- Verificar sintaxe JavaScript
+### ❌ `tsc` não encontrado no Docker build
+- Causa: não copiou `tsconfig.json`, `vite.config.ts`, `src/`
+- Solução: copiar TODOS os arquivos de config
 
 ---
 
