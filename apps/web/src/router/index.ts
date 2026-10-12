@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import pb from '../services/pocketbase'
 import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
+import AddTelegramView from '../views/AddTelegramView.vue'
+import WebhookConfigView from '../views/WebhookConfigView.vue'
 
 const router = createRouter({
   history: createWebHistory('/app/'),
@@ -21,6 +23,19 @@ const router = createRouter({
       name: 'dashboard',
       component: DashboardView,
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/add-telegram',
+      name: 'add-telegram',
+      component: AddTelegramView,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/webhook/:sessionId',
+      name: 'webhook-config',
+      component: WebhookConfigView,
+      meta: { requiresAuth: true },
+      props: true,
     },
   ],
 })

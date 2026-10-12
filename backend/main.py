@@ -435,7 +435,7 @@ async def delete_session(session_id: str):
 # 6. Testar webhook
 # -----------------------------------------------------------------------------
 @app.post("/api/test-webhook")
-async def test_webhook(webhook_url: str, background_tasks: BackgroundTasks):
+async def test_webhook(webhook_url: str = ""):
     """Envia uma mensagem de teste para o webhook"""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
