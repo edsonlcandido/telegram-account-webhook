@@ -5,7 +5,7 @@
  * Compatível com PocketBase 0.40.x
  */
 
-routerAdd("GET", "/app/{path?}", function(c) {
+routerAdd("GET", "/app/{path...}", function(c) {
     const path = c.pathParam("path")
     if (!path || path === "") {
         return c.staticFile("pb_public/app/index.html")
