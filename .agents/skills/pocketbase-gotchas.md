@@ -147,6 +147,28 @@ VITE_POCKETBASE_URL=/
 
 ---
 
+## Variáveis de Ambiente - Comunicação Interna Docker
+
+O PocketBase (serviço Application) precisa saber a URL do Telegram API para fazer chamadas internas:
+
+```env
+# Serviço Application (PocketBase)
+TELEGRAM_API_URL=http://telegram-api:8000
+```
+
+O backend Telegram API (FastAPI) precisa saber a URL do PocketBase:
+
+```env
+# Serviço Telegram API
+POCKETBASE_URL=http://pocketbase:8090
+```
+
+**Rede Docker interna:**
+- Application → `http://telegram-api:8000`
+- Telegram API → `http://pocketbase:8090`
+
+---
+
 ## Testar Localmente
 
 ```bash

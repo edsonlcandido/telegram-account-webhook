@@ -5,44 +5,52 @@ Sistema para conectar contas Telegram e enviar mensagens em tempo real via webho
 ## Arquitetura
 
 ```
-Usuário → Landing Page → Web App → PocketBase (auth)
-                                   ↓
-                            Backend (VPS)
-                              ↕ Telethon
-                          Telegram API
-                              ↓
-                     Webhook → Cliente
+┌──────────────────────────────────────────────────────────────────────┐
+│                          Easypanel VPS                               │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐ │
+│  │  Serviço 1: Application                                         │ │
+│  │  ────────────────────────────────────────────────────────────   │ │
+│  │  • PocketBase :8090                                            │ │
+│  │  • Landing Page /                                              │ │
+│  │  • Web App /app/                                              │ │
+│  │                                                                 │ │
+│  │  TELEGRAM_API_URL=http://telegram-api:8000                     │ │
+│  └────────────────────────────────────────────────────────────────┘ │
+│                              │                                      │
+│                              │ HTTP (interno)                        │
+│                              ▼                                      │
+│  ┌────────────────────────────────────────────────────────────────┐ │
+│  │  Serviço 2: Telegram API                                       │ │
+│  │  ────────────────────────────────────────────────────────────   │ │
+│  │  • FastAPI :8000                                               │ │
+│  │  • Telethon                                                    │ │
+│  └────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
 ```
-
-## Stack
-
-- **Landing**: Vue 3 + Vite
-- **Web App**: Vue 3 + Tailwind + Pinia + Vue Router
-- **Backend**: Python + FastAPI + Telethon
-- **Database**: PocketBase (standalone)
-- **Deploy**: Easypanel
 
 ## Estrutura
 
 ```
 telegram-account-webhook/
+├── Dockerfile.Application          # PocketBase + Frontend Vue
+├── Dockerfile.Telegram             # FastAPI + Telethon
+├── backend/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── .env.example
 ├── apps/
-│   ├── landing/           # Landing page
-│   │   ├── index.html
-│   │   └── src/
-│   └── web/              # Aplicação web
-│       ├── src/
-│       │   ├── App.vue
-│       │   ├── main.ts
-│       │   ├── router/
-│       │   ├── services/pocketbase.ts
-│       │   ├── stores/auth.ts
-│       │   └── views/
-│       └── vite.config.ts
-├── pocketbase/            # PocketBase binary + config
-├── scripts/               # Scripts utilitários
-├── Dockerfile
-└── AGENTS.md
+│   ├── landing/                    # Landing page
+│   └── web/                        # Web app Vue
+├── pocketbase/
+│   ├── pb_hooks/                  # SPA routing hooks
+│   │   └── main.pb.js
+│   └── pb_migrations/
+├── .agents/
+│   └── skills/
+│       └── pocketbase-gotchas.md   # PocketBase 0.40.x gotchas
+├── docker-compose.yml
+└── README.md
 ```
 
 ## Deploy
@@ -56,14 +64,18 @@ Push para `main` = deploy automático via Easypanel.
 
 ## Variáveis de Ambiente
 
-### PocketBase
+### Serviço Application (PocketBase)
+
 ```env
-POCKETBASE_URL=http://localhost:8090
+TELEGRAM_API_URL=http://telegram-api:8000    # URL do Telegram API (interno Docker)
 ```
 
-### Frontend
+### Serviço Telegram API
+
 ```env
-VITE_POCKETBASE_URL=https://telegram-webhook.seu-dominio.com
+POCKETBASE_URL=http://pocketbase:8090         # URL do PocketBase (interno Docker)
+TG_API_ID=123456
+TG_API_HASH=abc123...
 ```
 
 ## Coleções PocketBase
@@ -72,7 +84,7 @@ VITE_POCKETBASE_URL=https://telegram-webhook.seu-dominio.com
 - `telegram_accounts`: phone, api_id, api_hash, is_authorized
 - `webhooks`: webhook_url, filter_tipo, account_id
 
-## API Backend (futuro)
+## API Backend
 
 | Method | Endpoint | Descrição |
 |--------|----------|-----------|
@@ -85,7 +97,7 @@ VITE_POCKETBASE_URL=https://telegram-webhook.seu-dominio.com
 
 ```bash
 # Dev
-npm run dev          # Roda tudo (PB + Landing + Web)
+npm run dev          # Roda tudo
 
 # Build
 npm run build        # Builda landing + web
@@ -97,6 +109,6 @@ npm run preview      # Preview do PocketBase
 ## Importante
 
 - Deploy via Easypanel (VPS)
-- Backend Python ainda não implementado (precisa criar)
-- Landing page + Web app já existem
-- PocketBase é standalone para este projeto
+- Backend Python FastAPI em `backend/`
+- PocketBase 0.40.5 standalone
+- Rede Docker interna para comunicação entre serviços
