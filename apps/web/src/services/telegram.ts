@@ -1,8 +1,10 @@
 import pb from './pocketbase'
 
-// URL relativa: em produção o Easypanel roteia /api/* para o serviço
-// telegram-api; em dev local assume-se o mesmo (proxy do Vite ou PocketBase).
-const apiUrl = ''
+// Base path do backend Telegram API. O hook `00-api-proxy.pb.js` no PocketBase
+// intercepta essas rotas e repassa via $http.send para o serviço FastAPI.
+// Usamos o prefixo /api-telegram/* (em vez de /api/*) para nao colidir com
+// as rotas nativas do PocketBase (/api/collections, /api/health, etc).
+const apiUrl = '/api-telegram'
 
 // Tipos
 export interface TelegramSession {
@@ -66,7 +68,7 @@ export const telegramApi = {
    * Envia código de verificação para o telefone
    */
   async sendCode(phone: string): Promise<SendCodeResponse> {
-    return request<SendCodeResponse>('/api/send-code', {
+    return request<SendCodeResponse>('/send-code', {
       method: 'POST',
       body: JSON.stringify({ phone_number: phone }),
     })
@@ -76,7 +78,7 @@ export const telegramApi = {
    * Verifica o código e cria sessão
    */
   async verifyCode(phone: string, code: string): Promise<VerifyCodeResponse> {
-    return request<VerifyCodeResponse>('/api/verify-code', {
+    return request<VerifyCodeResponse>('/verify-code', {
       method: 'POST',
       body: JSON.stringify({
         phone_number: phone,
@@ -89,14 +91,14 @@ export const telegramApi = {
    * Lista todas as sessões
    */
   async getSessions(): Promise<{ sessions: TelegramSession[] }> {
-    return request<{ sessions: TelegramSession[] }>('/api/sessions')
+    return request<{ sessions: TelegramSession[] }>('/sessions')
   },
 
   /**
    * Configura webhook para uma sessão
    */
   async setWebhook(sessionId: string, webhookUrl: string): Promise<{ success: boolean; webhook_url: string }> {
-    return request<{ success: boolean; webhook_url: string }>('/api/set-webhook', {
+    return request<{ success: boolean; webhook_url: string }>('/set-webhook', {
       method: 'POST',
       body: JSON.stringify({
         session_id: sessionId,
@@ -109,7 +111,7 @@ export const telegramApi = {
    * Remove uma sessão
    */
   async deleteSession(sessionId: string): Promise<{ success: boolean }> {
-    return request<{ success: boolean }>(`/api/session/${sessionId}`, {
+    return request<{ success: boolean }>(`/session/${sessionId}`, {
       method: 'DELETE',
     })
   },
@@ -118,7 +120,7 @@ export const telegramApi = {
    * Testa um webhook
    */
   async testWebhook(webhookUrl: string): Promise<{ success: boolean; status: number }> {
-    const data = await request<{ success: boolean; status_code: number }>('/api/test-webhook', {
+    const data = await request<{ success: boolean; status_code: number }>('/test-webhook', {
       method: 'POST',
       body: JSON.stringify({ webhook_url: webhookUrl }),
     })

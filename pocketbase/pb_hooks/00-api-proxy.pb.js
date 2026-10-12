@@ -1,16 +1,24 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 // =============================================================================
-// Proxy reverso: encaminha as chamadas /api/* do frontend (mesma origem) para
-// o servico Telegram API (FastAPI) via DNS interno do Docker.
+// Proxy reverso: encaminha as chamadas /api-telegram/* do frontend (mesma
+// origem) para o servico Telegram API (FastAPI) via DNS interno do Docker.
 // =============================================================================
 //
+// Por que esse prefixo e nao /api/*:
+//   O namespace /api/ e nativo do PocketBase (/api/collections, /api/health,
+//   /api/records, /api/files, /api/batch, /api/logs, /api/imports, /api/cron,
+//   /api/email-templates, /api/backups, /api/realtime, /api/settings, etc).
+//   Usar /api/* num routerAdd do JSVM mistura o namespace e cria risco de
+//   colisao com rotas nativas adicionadas em versoes futuras do PB. O
+//   prefixo /api-telegram/* isola 100% esse hook do resto.
+//
 // Por que isso existe:
-//   O frontend Vue chama /api/send-code, /api/sessions etc. via URL relativa
-//   (mesma origem = este PB). O PB nao implementa essas rotas, e nao ha
-//   middleware HTTP na frente pra repassar. Entao o hook abaixo intercepta
-//   cada /api/* e faz $http.send pro FastAPI usando TELEGRAM_API_URL
-//   (variavel de ambiente do servico PB no Easypanel).
+//   O frontend Vue chama /api-telegram/send-code, /api-telegram/sessions
+//   etc. via URL relativa (mesma origem = este PB). O PB nao implementa
+//   essas rotas, e nao ha middleware HTTP na frente pra repassar. Entao o
+//   hook abaixo intercepta cada /api-telegram/* e faz $http.send pro FastAPI
+//   usando TELEGRAM_API_URL (variavel de ambiente do servico PB no Easypanel).
 //
 // O frontend envia o JWT do PocketBase no header `Authorization: Bearer <jwt>`;
 // este hook apenas repassa o header adiante. O FastAPI valida o token via
@@ -91,26 +99,26 @@ function proxyToFastApi(e, method, upstreamPath) {
 }
 
 // -----------------------------------------------------------------------------
-// Rotas
+// Rotas - prefixo /api-telegram/* para isolar do namespace nativo /api/* do PB
 // -----------------------------------------------------------------------------
 
-routerAdd("POST", "/api/send-code", (e) => {
+routerAdd("POST", "/api-telegram/send-code", (e) => {
     return proxyToFastApi(e, "POST", "/api/send-code");
 });
 
-routerAdd("POST", "/api/verify-code", (e) => {
+routerAdd("POST", "/api-telegram/verify-code", (e) => {
     return proxyToFastApi(e, "POST", "/api/verify-code");
 });
 
-routerAdd("POST", "/api/set-webhook", (e) => {
+routerAdd("POST", "/api-telegram/set-webhook", (e) => {
     return proxyToFastApi(e, "POST", "/api/set-webhook");
 });
 
-routerAdd("GET", "/api/sessions", (e) => {
+routerAdd("GET", "/api-telegram/sessions", (e) => {
     return proxyToFastApi(e, "GET", "/api/sessions");
 });
 
-routerAdd("DELETE", "/api/session/{sessionId}", (e) => {
+routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
     // Extrai o sessionId do path requisitado (PB nao expoe params nomeados
     // de forma simples nas rotas custom; caminho mais robusto e split).
     const parts = e.requestInfo().path.split("/").filter(Boolean);
@@ -118,6 +126,6 @@ routerAdd("DELETE", "/api/session/{sessionId}", (e) => {
     return proxyToFastApi(e, "DELETE", `/api/session/${sessionId}`);
 });
 
-routerAdd("POST", "/api/test-webhook", (e) => {
+routerAdd("POST", "/api-telegram/test-webhook", (e) => {
     return proxyToFastApi(e, "POST", "/api/test-webhook");
 });
