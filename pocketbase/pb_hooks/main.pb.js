@@ -1,12 +1,18 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 /**
- * PocketBase Hook: SPA Routing para o Web App
- * 
- * Serve o Vue SPA em /app/* com index fallback para SPA routing.
- * Sem dependência de $apis.static().
+ * SPA Routing - Serve Vue app em /app/*
+ * Compatível com PocketBase 0.40.x
  */
 
 routerAdd("GET", "/app/{path?}", function(c) {
-    c.staticFile("pb_public/app/index.html")
+    const path = c.pathParam("path")
+    if (!path || path === "") {
+        return c.staticFile("pb_public/app/index.html")
+    }
+    try {
+        return c.staticFile("pb_public/app/" + path)
+    } catch (e) {
+        return c.staticFile("pb_public/app/index.html")
+    }
 })

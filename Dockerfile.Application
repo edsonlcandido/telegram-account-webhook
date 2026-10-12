@@ -3,56 +3,67 @@
 # Sobe: Landing Page + Vue Web App + PocketBase
 # =============================================================================
 
-FROM node:20-alpine AS builder
+# -----------------------------------------------------------------------------
+# Estágio 1: Build da Landing Page
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS landing-builder
 
 WORKDIR /app
 
-# Landing
-COPY apps/landing/package.json apps/landing/
-COPY apps/landing/tsconfig.json apps/landing/
-COPY apps/landing/vite.config.ts apps/landing/
-COPY apps/landing/src apps/landing/src/
-COPY apps/landing/index.html apps/landing/
-COPY apps/landing/tailwind.config.js apps/landing/
-COPY apps/landing/postcss.config.js apps/landing/
+# Copiar package.json para cache
+COPY package*.json ./
+COPY apps/landing/package*.json ./apps/landing/
+
+# Instalar e buildar
 RUN cd apps/landing && npm install && npm run build
 
-# Web App
-COPY apps/web/package.json apps/web/
-COPY apps/web/tsconfig.json apps/web/
-COPY apps/web/vite.config.ts apps/web/
-COPY apps/web/src apps/web/src/
-COPY apps/web/index.html apps/web/
-COPY apps/web/tailwind.config.js apps/web/
-COPY apps/web/postcss.config.js apps/web/
+# -----------------------------------------------------------------------------
+# Estágio 2: Build do Web App
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS web-builder
+
+WORKDIR /app
+
+# Copiar package.json para cache
+COPY package*.json ./
+COPY apps/web/package*.json ./apps/web/
+
+# Instalar e buildar
 RUN cd apps/web && npm install && npm run build
 
 # -----------------------------------------------------------------------------
-FROM alpine:3.19 AS production
+# Estágio 3: Imagem final com PocketBase
+# -----------------------------------------------------------------------------
+FROM alpine:latest
+
+# Instalar dependências
+RUN apk add --no-cache ca-certificates wget unzip
 
 WORKDIR /app
 
-# Baixa e extrai PocketBase
-RUN apk add --no-cache curl unzip && \
-    curl -L -o pocketbase.zip https://github.com/pocketbase/pocketbase/releases/download/v0.22.18/pocketbase_0.22.18_linux_amd64.zip && \
-    unzip pocketbase.zip && \
-    rm pocketbase.zip && \
-    chmod +x pocketbase
+# Baixar e instalar PocketBase (versão via ARG)
+ARG POCKETBASE_VERSION=0.40.5
 
-# Copia frontend buildado
-COPY --from=builder /app/apps/landing/dist /app/public
-COPY --from=builder /app/apps/web/dist /app/public/app
+RUN wget https://github.com/pocketbase/pocketbase/releases/download/v${POCKETBASE_VERSION}/pocketbase_${POCKETBASE_VERSION}_linux_amd64.zip \
+    && unzip pocketbase_${POCKETBASE_VERSION}_linux_amd64.zip \
+    && rm pocketbase_${POCKETBASE_VERSION}_linux_amd64.zip \
+    && chmod +x pocketbase
 
-# Hooks
-COPY pocketbase/pb_hooks /app/pb_hooks
+# Criar estrutura de diretórios do PocketBase
+RUN mkdir -p pb_hooks pb_migrations pb_data pb_public/app
 
-# Dados
-VOLUME ["/app/pb_data"]
+# Copiar hooks e configurações
+COPY pocketbase/pb_hooks ./pb_hooks
 
+# Copiar builds das aplicações
+COPY --from=landing-builder /app/apps/landing/dist ./pb_public
+COPY --from=web-builder /app/apps/web/dist ./pb_public/app
+
+# Expor porta
 EXPOSE 8090
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8090/api/health || exit 1
+# Volume para dados persistentes
+VOLUME ["/app/pb_data"]
 
-ENTRYPOINT ["/app/pocketbase"]
-CMD ["serve", "--http=0.0.0.0:8090", "--publicDir=/app/public"]
+# Comando de execução
+CMD ["./pocketbase", "serve", "--http=0.0.0.0:8090"]
