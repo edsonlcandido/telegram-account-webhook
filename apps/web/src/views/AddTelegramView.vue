@@ -87,7 +87,7 @@ const verifyCode = async () => {
   }
   
   try {
-    await telegramApi.verifyCode(fullPhone, code.value, phoneCodeHash.value)
+    await telegramApi.verifyCode(fullPhone, code.value)
     step.value = 'success'
     
     // Redireciona após 2 segundos
