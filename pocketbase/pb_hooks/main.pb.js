@@ -3,11 +3,10 @@
 /**
  * PocketBase Hook: SPA Routing para o Web App
  * 
- * Este hook garante que todas as rotas do SPA (Single Page Application)
- * sejam servidas com o index.html correto, permitindo que o
- * Vue Router gerencie as rotas do lado do cliente.
- * 
- * Usa $apis.static() com indexFallback=true para suporte a SPA.
+ * Serve o Vue SPA em /app/* com index fallback para SPA routing.
+ * Sem dependência de $apis.static().
  */
 
-routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", true))
+routerAdd("GET", "/app/{path?}", function(c) {
+    c.staticFile("pb_public/app/index.html")
+})

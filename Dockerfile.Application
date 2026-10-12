@@ -55,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8090/api/health || exit 1
 
 ENTRYPOINT ["/app/pocketbase"]
-CMD ["serve", "--http=0.0.0.0:8090", "--dirs=/app/public"]
+CMD ["serve", "--http=0.0.0.0:8090", "--publicDir=/app/public"]
