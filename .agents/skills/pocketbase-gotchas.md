@@ -93,8 +93,57 @@ CMD ["./pocketbase", "serve", "--http=0.0.0.0:8090"]
 - Solução: Atualizar para 0.40.x
 
 ### ❌ `tsc` não encontrado no Docker build
-- Causa: não copiou `tsconfig.json`, `vite.config.ts`, `src/`
-- Solução: copiar TODOS os arquivos de config
+- Causa: não copiou os arquivos de config do projeto
+- Solução: copiar TODOS os arquivos necessários
+
+---
+
+## Dockerfile npm workspaces - Arquivos Necessários
+
+O Dockerfile DEVE copiar todos os arquivos de config, não só package.json:
+
+```dockerfile
+# ✅ CERTO - copia tudo
+COPY apps/landing/package*.json ./apps/landing/
+COPY apps/landing/tsconfig.json ./apps/landing/
+COPY apps/landing/vite.config.ts ./apps/landing/
+COPY apps/landing/postcss.config.js ./apps/landing/
+COPY apps/landing/tailwind.config.js ./apps/landing/
+COPY apps/landing/src ./apps/landing/src/
+COPY apps/landing/index.html ./apps/landing/
+COPY apps/landing/public ./apps/landing/public/
+```
+
+```dockerfile
+# ❌ ERRADO - só package.json não funciona
+COPY package*.json ./
+COPY apps/landing/package*.json ./apps/landing/
+```
+
+---
+
+## Vue App - URL do PocketBase em Produção
+
+Em produção, o Vue app é servido pelo PocketBase na **mesma origem**. Usar URL relativa ou `window.location.origin`.
+
+```typescript
+// services/pocketbase.ts
+function getPocketBaseUrl(): string {
+  // Em produção (mesma origem), usar origin atual
+  if (import.meta.env.PROD) {
+    return window.location.origin
+  }
+  // Em dev, usar localhost
+  return 'http://localhost:8090'
+}
+
+const pb = new PocketBase(getPocketBaseUrl())
+```
+
+`.env.production`:
+```env
+VITE_POCKETBASE_URL=/
+```
 
 ---
 
