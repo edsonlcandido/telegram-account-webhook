@@ -1,16 +1,5 @@
-import pb from './pocketbase'
-
-// URL do Telegram API - usa variável de ambiente ou relativa (mesma origem do frontend que é proxyado)
-const getTelegramApiUrl = (): string => {
-  // Em produção no Easypanel, o PocketBase proxy para /api/*
-  if (import.meta.env.PROD) {
-    return ''
-  }
-  // Em dev, usa localhost:8000
-  return import.meta.env.VITE_TELEGRAM_API_URL || 'http://localhost:8000'
-}
-
-const apiUrl = getTelegramApiUrl()
+// URL do Telegram API - em produção usa proxy reverso do PocketBase
+const apiUrl = ''
 
 // Tipos
 export interface TelegramSession {
@@ -57,11 +46,7 @@ export const telegramApi = {
   /**
    * Verifica o código e cria sessão
    */
-  async verifyCode(
-    phone: string,
-    code: string,
-    phoneCodeHash: string
-  ): Promise<VerifyCodeResponse> {
+  async verifyCode(phone: string, code: string): Promise<VerifyCodeResponse> {
     const response = await fetch(`${apiUrl}/api/verify-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -131,15 +116,18 @@ export const telegramApi = {
   /**
    * Testa um webhook
    */
-  async testWebhook(webhookUrl: string): Promise<{ success: boolean; status_code: number }> {
-    const response = await fetch(`${apiUrl}/api/test-webhook?webhook_url=${encodeURIComponent(webhookUrl)}`, {
+  async testWebhook(webhookUrl: string): Promise<{ success: boolean; status: number }> {
+    const response = await fetch(`${apiUrl}/api/test-webhook`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook_url: webhookUrl }),
     })
 
     if (!response.ok) {
       throw new Error('Erro ao testar webhook')
     }
 
-    return response.json()
+    const data = await response.json()
+    return { success: data.success, status: data.status_code }
   },
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { telegramApi, type TelegramSession } from '../services/telegram'
+import { telegramApi } from '../services/telegram'
 
 const route = useRoute()
 const router = useRouter()
