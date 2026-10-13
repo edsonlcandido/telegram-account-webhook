@@ -4,17 +4,16 @@
 // Proxy reverso: encaminha /api-telegram/* do frontend (mesma origem) para o
 // servico Telegram API (FastAPI).
 // =============================================================================
-// ATENCAO: cada handler e self-contained. Nao declaramos funcoes top-level
-// compartilhadas entre routerAdd, porque o JSVM do PB executa cada callback em
-// um VM context separado do pool - referencias a `let`/`const`/`function` do
-// top-level dao `ReferenceError: not defined` em producao (embora funcionem
-// em testes single-thread). Por isso cada handler inline o seu `proxyToFastApi`.
+// ATENCAO: cada handler e 100% self-contained. Nenhum `const`/`let`/`function`
+// declarado no top-level do arquivo, porque o JSVM do PB executa cada callback
+// de routerAdd em um VM context separado do pool - qualquer referencia a
+// declaracao do top-level (mesmo `const`) da `ReferenceError: not defined` em
+// producao. Cada handler le a env, monta o URL e faz o $http.send sozinho.
 // =============================================================================
 
-const UPSTREAM_BASE = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
-
 routerAdd("POST", "/api-telegram/send-code", (e) => {
-    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/send-code";
+    const base = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
+    const url = base.replace(/\/+$/, "") + "/api/send-code";
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
     if (reqInfo.headers && reqInfo.headers.authorization) {
@@ -33,7 +32,8 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
 });
 
 routerAdd("POST", "/api-telegram/verify-code", (e) => {
-    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/verify-code";
+    const base = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
+    const url = base.replace(/\/+$/, "") + "/api/verify-code";
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
     if (reqInfo.headers && reqInfo.headers.authorization) {
@@ -52,7 +52,8 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
 });
 
 routerAdd("POST", "/api-telegram/set-webhook", (e) => {
-    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/set-webhook";
+    const base = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
+    const url = base.replace(/\/+$/, "") + "/api/set-webhook";
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
     if (reqInfo.headers && reqInfo.headers.authorization) {
@@ -71,7 +72,8 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
 });
 
 routerAdd("GET", "/api-telegram/sessions", (e) => {
-    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/sessions";
+    const base = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
+    const url = base.replace(/\/+$/, "") + "/api/sessions";
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
     if (reqInfo.headers && reqInfo.headers.authorization) {
@@ -89,9 +91,10 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
 });
 
 routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
+    const base = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
     const parts = e.requestInfo().path.split("/").filter(Boolean);
     const sessionId = parts[parts.length - 1] || "";
-    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/session/" + sessionId;
+    const url = base.replace(/\/+$/, "") + "/api/session/" + sessionId;
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
     if (reqInfo.headers && reqInfo.headers.authorization) {
@@ -109,7 +112,8 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
 });
 
 routerAdd("POST", "/api-telegram/test-webhook", (e) => {
-    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/test-webhook";
+    const base = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
+    const url = base.replace(/\/+$/, "") + "/api/test-webhook";
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
     if (reqInfo.headers && reqInfo.headers.authorization) {
