@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { telegramApi } from '../services/telegram'
 
-const route = useRoute()
 const router = useRouter()
 
-const sessionId = computed(() => route.query.session as string || '')
+// Path param via props: true no router (/webhook/:sessionId)
+// Não desestruturar para preservar reatividade (compatível com qualquer Vue 3.x)
+const props = defineProps<{ sessionId: string }>()
 
 // Estado
 const webhookUrl = ref('')
@@ -17,7 +18,7 @@ const saved = ref(false)
 const error = ref('')
 
 onMounted(() => {
-  if (!sessionId.value) {
+  if (!props.sessionId) {
     router.push('/dashboard')
   }
 })
@@ -40,13 +41,13 @@ const testWebhook = async () => {
 }
 
 const saveWebhook = async () => {
-  if (!webhookUrl.value || !sessionId.value) return
-  
+  if (!webhookUrl.value || !props.sessionId) return
+
   loading.value = true
   error.value = ''
-  
+
   try {
-    await telegramApi.setWebhook(sessionId.value, webhookUrl.value)
+    await telegramApi.setWebhook(props.sessionId, webhookUrl.value)
     saved.value = true
   } catch (e: any) {
     error.value = e.message
@@ -109,7 +110,7 @@ const goBack = () => {
             </div>
             <div>
               <p class="text-sm text-gray-500">Conta configurada</p>
-              <p class="font-mono text-sm text-gray-700">{{ sessionId }}</p>
+              <p class="font-mono text-sm text-gray-700">{{ props.sessionId }}</p>
             </div>
           </div>
         </div>
