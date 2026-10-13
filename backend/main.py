@@ -350,7 +350,11 @@ async def send_code(request: SendCodeRequest, _user: dict = Depends(verify_pb_au
     client = TelegramClient(StringSession(), API_ID, API_HASH)
 
     try:
-        await client.start()
+        # Em modo servidor NÃO usar client.start() — ele tenta ler phone/código
+        # do stdin interativamente e dispara EOFError. connect() só estabelece
+        # a conexão TCP sem autenticar; send_code_request depois pede o SMS
+        # sem precisar de auth prévia.
+        await client.connect()
         result = await client.send_code_request(request.phone_number)
 
         # Salva temporariamente para usar na verificação
