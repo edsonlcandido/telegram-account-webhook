@@ -48,12 +48,13 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    // Tenta parsear como JSON; se for, retorna via e.string.
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
+    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/verify-code", (e) => {
@@ -93,12 +94,13 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    // Tenta parsear como JSON; se for, retorna via e.string.
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
+    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/set-webhook", (e) => {
@@ -138,12 +140,13 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    // Tenta parsear como JSON; se for, retorna via e.string.
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
+    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("GET", "/api-telegram/sessions", (e) => {
@@ -182,12 +185,13 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    // Tenta parsear como JSON; se for, retorna via e.string.
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
+    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
@@ -228,12 +232,13 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    // Tenta parsear como JSON; se for, retorna via e.string.
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
+    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/test-webhook", (e) => {
@@ -273,10 +278,11 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    // Tenta parsear como JSON; se for, retorna via e.string.
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
+    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
+    return e.string(resp.status, finalBody);
 });
