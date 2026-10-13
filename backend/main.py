@@ -118,6 +118,11 @@ def delete_session_file(session_id: str):
 async def handle_new_message(event, session_id: str):
     """Handler que dispara quando chega nova mensagem"""
     try:
+        logger.info(
+            f"📩 Nova mensagem recebida: session={session_id} "
+            f"chat={event.chat_id} msg_id={event.id}"
+        )
+
         # Busca webhook da sessão
         webhook_url = None
         if session_id in active_clients:
@@ -125,9 +130,22 @@ async def handle_new_message(event, session_id: str):
             if session_file.exists():
                 data = json.loads(session_file.read_text())
                 webhook_url = data.get("webhook_url")
+                logger.debug(f"webhook_url lido do arquivo: {webhook_url}")
+            else:
+                logger.warning(
+                    f"⚠️ Sessão {session_id} em active_clients mas arquivo "
+                    f"{session_file} sumiu — webhook NÃO será chamado"
+                )
+        else:
+            logger.warning(
+                f"⚠️ Mensagem de sessão {session_id} NÃO está em active_clients "
+                f"— handler foi chamado mas cliente foi desconectado?"
+            )
 
         if not webhook_url:
-            logger.debug(f"Sessão {session_id} sem webhook configurado, ignorando")
+            logger.warning(
+                f"⏭️ Sessão {session_id} sem webhook configurado, ignorando"
+            )
             return
 
         # Extrai dados da mensagem
@@ -324,10 +342,17 @@ async def verify_pb_auth(authorization: str | None = Header(default=None)) -> di
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    # Conta arquivos salvos em /app/sessions/*.json (sem fazer I/O pesado —
+    # só glob, não lê conteúdo). Útil pra distinguir:
+    #   - active=0 + saved=0 → nunca criou conta ou volume foi perdido
+    #   - active=0 + saved>0 → arquivos persistem mas client.start() falhou
+    saved_count = sum(1 for _ in SESSIONS_DIR.glob("*.session"))
     return {
         "status": "ok",
         "active_sessions": len(active_clients),
-        "api_configured": API_ID != 0 and bool(API_HASH)
+        "saved_sessions": saved_count,
+        "sessions_dir": str(SESSIONS_DIR),
+        "api_configured": API_ID != 0 and bool(API_HASH),
     }
 
 
@@ -625,6 +650,44 @@ async def sync_webhook_pb(session_id: str, webhook_url: str):
                 )
     except Exception as e:
         logger.error(f"Erro ao sincronizar webhook no PB: {e}")
+
+
+# =============================================================================
+# Admin / Debug
+# =============================================================================
+
+@app.get("/api/admin/sessions")
+async def admin_list_sessions(_user: dict = Depends(verify_pb_auth)):
+    """
+    Lista sessões salvas em /app/sessions/*.json — útil pra debug quando
+    `active_sessions=0` no /health. NÃO expõe `session_string` (credencial
+    real da conta Telegram). Mostra apenas phone, webhook_url, created_at,
+    tamanho do session_string e flag active (se está em active_clients).
+    """
+    sessions = []
+    for session_file in sorted(SESSIONS_DIR.glob("*.session")):
+        try:
+            data = json.loads(session_file.read_text())
+            session_id = session_file.stem
+            sessions.append({
+                "session_id": session_id,
+                "phone": data.get("phone"),
+                "webhook_url": data.get("webhook_url"),
+                "created_at": data.get("created_at"),
+                "session_string_length": len(data.get("session_string", "")),
+                "active": session_id in active_clients,
+            })
+        except Exception as e:
+            sessions.append({
+                "session_id": session_file.stem,
+                "error": f"falha ao ler: {e}",
+            })
+    return {
+        "sessions_dir": str(SESSIONS_DIR),
+        "total": len(sessions),
+        "active_count": sum(1 for s in sessions if s.get("active")),
+        "sessions": sessions,
+    }
 
 
 # =============================================================================
