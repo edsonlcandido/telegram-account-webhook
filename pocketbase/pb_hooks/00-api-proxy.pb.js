@@ -32,7 +32,15 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    const text = toString(resp.body);
+    try {
+        data = JSON.parse(text);
+    } catch (_) {
+        data = text;
+    }
+    if (data === null || data === undefined) {
+        data = text;
+    }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -57,7 +65,15 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    const text = toString(resp.body);
+    try {
+        data = JSON.parse(text);
+    } catch (_) {
+        data = text;
+    }
+    if (data === null || data === undefined) {
+        data = text;
+    }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -82,7 +98,15 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    const text = toString(resp.body);
+    try {
+        data = JSON.parse(text);
+    } catch (_) {
+        data = text;
+    }
+    if (data === null || data === undefined) {
+        data = text;
+    }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -106,7 +130,15 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    const text = toString(resp.body);
+    try {
+        data = JSON.parse(text);
+    } catch (_) {
+        data = text;
+    }
+    if (data === null || data === undefined) {
+        data = text;
+    }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -132,7 +164,15 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    const text = toString(resp.body);
+    try {
+        data = JSON.parse(text);
+    } catch (_) {
+        data = text;
+    }
+    if (data === null || data === undefined) {
+        data = text;
+    }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -157,6 +197,14 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    const text = toString(resp.body);
+    try {
+        data = JSON.parse(text);
+    } catch (_) {
+        data = text;
+    }
+    if (data === null || data === undefined) {
+        data = text;
+    }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
