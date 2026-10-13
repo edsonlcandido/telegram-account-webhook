@@ -1,10 +1,10 @@
 import pb from './pocketbase'
 
-// Base path do backend Telegram API. O hook `00-api-proxy.pb.js` no PocketBase
-// intercepta essas rotas e repassa via $http.send para o serviço FastAPI.
-// Usamos o prefixo /api-telegram/* (em vez de /api/*) para nao colidir com
-// as rotas nativas do PocketBase (/api/collections, /api/health, etc).
-const apiUrl = '/api-telegram'
+// URL do backend Telegram API. O frontend chama DIRETO (cross-origin), sem
+// passar por hook do PocketBase. O JSVM do PB 0.40.5 tem bug onde
+// e.string/e.json perde o body apos chamar $http.send, o que impossibilita
+// proxy via hook. CORS no FastAPI ja aceita o dominio publico do frontend.
+const apiUrl = 'https://api-telegram.ehtudo.app'
 
 // Tipos
 export interface TelegramSession {
