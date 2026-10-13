@@ -32,49 +32,29 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // DEBUG: log do body antes de tentar decodar
-    const _b = resp.body;
-    const _bType = typeof _b;
-    const _bLen = _b ? (_b.length || 0) : 0;
-    let _bPreview = "";
-    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
-    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
-
-    // Tenta varias formas de decodificar Uint8Array -> string
+    // Decodifica Uint8Array -> string usando o helper global toString do JSVM
+    // (documentado na skill pocketbase-jsvm). O log anterior confirmou que
+    // toString funciona, mas e.json(status, obj) nao estava enviando o body.
+    // Workaround: sempre retornar o body como string, com Content-Type JSON
+    // setado no header, e o frontend faz JSON.parse se precisar.
     let text = "";
-    if (_b && _bLen > 0) {
-        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+    if (resp.body && resp.body.length > 0) {
         if (typeof toString === "function") {
-            try { text = toString(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
+            try { text = toString(resp.body); } catch (_) {}
         }
-        // 2) TextDecoder (se existir)
-        if (!text && typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
-        }
-        // 3) fallback manual: itera bytes
         if (!text) {
-            try {
-                for (let i = 0; i < _bLen; i++) {
-                    text += String.fromCharCode(_b[i] & 0xFF);
-                }
-                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
-            } catch (err) {
-                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i] & 0xFF);
             }
         }
     }
-    try {
-        data = JSON.parse(text);
-    } catch (_) {
-        data = text;
-    }
-    if (data === null || data === undefined) {
-        data = text;
-    }
-    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
-    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
+    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+    const isJson = parsed !== null && typeof parsed === "object";
+    const finalBody = isJson ? JSON.stringify(parsed) : text;
+    e.responseHeader().set("Content-Type", "application/json");
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/verify-code", (e) => {
@@ -98,49 +78,29 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // DEBUG: log do body antes de tentar decodar
-    const _b = resp.body;
-    const _bType = typeof _b;
-    const _bLen = _b ? (_b.length || 0) : 0;
-    let _bPreview = "";
-    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
-    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
-
-    // Tenta varias formas de decodificar Uint8Array -> string
+    // Decodifica Uint8Array -> string usando o helper global toString do JSVM
+    // (documentado na skill pocketbase-jsvm). O log anterior confirmou que
+    // toString funciona, mas e.json(status, obj) nao estava enviando o body.
+    // Workaround: sempre retornar o body como string, com Content-Type JSON
+    // setado no header, e o frontend faz JSON.parse se precisar.
     let text = "";
-    if (_b && _bLen > 0) {
-        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+    if (resp.body && resp.body.length > 0) {
         if (typeof toString === "function") {
-            try { text = toString(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
+            try { text = toString(resp.body); } catch (_) {}
         }
-        // 2) TextDecoder (se existir)
-        if (!text && typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
-        }
-        // 3) fallback manual: itera bytes
         if (!text) {
-            try {
-                for (let i = 0; i < _bLen; i++) {
-                    text += String.fromCharCode(_b[i] & 0xFF);
-                }
-                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
-            } catch (err) {
-                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i] & 0xFF);
             }
         }
     }
-    try {
-        data = JSON.parse(text);
-    } catch (_) {
-        data = text;
-    }
-    if (data === null || data === undefined) {
-        data = text;
-    }
-    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
-    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
+    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+    const isJson = parsed !== null && typeof parsed === "object";
+    const finalBody = isJson ? JSON.stringify(parsed) : text;
+    e.responseHeader().set("Content-Type", "application/json");
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/set-webhook", (e) => {
@@ -164,49 +124,29 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // DEBUG: log do body antes de tentar decodar
-    const _b = resp.body;
-    const _bType = typeof _b;
-    const _bLen = _b ? (_b.length || 0) : 0;
-    let _bPreview = "";
-    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
-    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
-
-    // Tenta varias formas de decodificar Uint8Array -> string
+    // Decodifica Uint8Array -> string usando o helper global toString do JSVM
+    // (documentado na skill pocketbase-jsvm). O log anterior confirmou que
+    // toString funciona, mas e.json(status, obj) nao estava enviando o body.
+    // Workaround: sempre retornar o body como string, com Content-Type JSON
+    // setado no header, e o frontend faz JSON.parse se precisar.
     let text = "";
-    if (_b && _bLen > 0) {
-        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+    if (resp.body && resp.body.length > 0) {
         if (typeof toString === "function") {
-            try { text = toString(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
+            try { text = toString(resp.body); } catch (_) {}
         }
-        // 2) TextDecoder (se existir)
-        if (!text && typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
-        }
-        // 3) fallback manual: itera bytes
         if (!text) {
-            try {
-                for (let i = 0; i < _bLen; i++) {
-                    text += String.fromCharCode(_b[i] & 0xFF);
-                }
-                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
-            } catch (err) {
-                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i] & 0xFF);
             }
         }
     }
-    try {
-        data = JSON.parse(text);
-    } catch (_) {
-        data = text;
-    }
-    if (data === null || data === undefined) {
-        data = text;
-    }
-    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
-    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
+    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+    const isJson = parsed !== null && typeof parsed === "object";
+    const finalBody = isJson ? JSON.stringify(parsed) : text;
+    e.responseHeader().set("Content-Type", "application/json");
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("GET", "/api-telegram/sessions", (e) => {
@@ -229,49 +169,29 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // DEBUG: log do body antes de tentar decodar
-    const _b = resp.body;
-    const _bType = typeof _b;
-    const _bLen = _b ? (_b.length || 0) : 0;
-    let _bPreview = "";
-    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
-    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
-
-    // Tenta varias formas de decodificar Uint8Array -> string
+    // Decodifica Uint8Array -> string usando o helper global toString do JSVM
+    // (documentado na skill pocketbase-jsvm). O log anterior confirmou que
+    // toString funciona, mas e.json(status, obj) nao estava enviando o body.
+    // Workaround: sempre retornar o body como string, com Content-Type JSON
+    // setado no header, e o frontend faz JSON.parse se precisar.
     let text = "";
-    if (_b && _bLen > 0) {
-        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+    if (resp.body && resp.body.length > 0) {
         if (typeof toString === "function") {
-            try { text = toString(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
+            try { text = toString(resp.body); } catch (_) {}
         }
-        // 2) TextDecoder (se existir)
-        if (!text && typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
-        }
-        // 3) fallback manual: itera bytes
         if (!text) {
-            try {
-                for (let i = 0; i < _bLen; i++) {
-                    text += String.fromCharCode(_b[i] & 0xFF);
-                }
-                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
-            } catch (err) {
-                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i] & 0xFF);
             }
         }
     }
-    try {
-        data = JSON.parse(text);
-    } catch (_) {
-        data = text;
-    }
-    if (data === null || data === undefined) {
-        data = text;
-    }
-    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
-    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
+    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+    const isJson = parsed !== null && typeof parsed === "object";
+    const finalBody = isJson ? JSON.stringify(parsed) : text;
+    e.responseHeader().set("Content-Type", "application/json");
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
@@ -296,49 +216,29 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // DEBUG: log do body antes de tentar decodar
-    const _b = resp.body;
-    const _bType = typeof _b;
-    const _bLen = _b ? (_b.length || 0) : 0;
-    let _bPreview = "";
-    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
-    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
-
-    // Tenta varias formas de decodificar Uint8Array -> string
+    // Decodifica Uint8Array -> string usando o helper global toString do JSVM
+    // (documentado na skill pocketbase-jsvm). O log anterior confirmou que
+    // toString funciona, mas e.json(status, obj) nao estava enviando o body.
+    // Workaround: sempre retornar o body como string, com Content-Type JSON
+    // setado no header, e o frontend faz JSON.parse se precisar.
     let text = "";
-    if (_b && _bLen > 0) {
-        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+    if (resp.body && resp.body.length > 0) {
         if (typeof toString === "function") {
-            try { text = toString(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
+            try { text = toString(resp.body); } catch (_) {}
         }
-        // 2) TextDecoder (se existir)
-        if (!text && typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
-        }
-        // 3) fallback manual: itera bytes
         if (!text) {
-            try {
-                for (let i = 0; i < _bLen; i++) {
-                    text += String.fromCharCode(_b[i] & 0xFF);
-                }
-                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
-            } catch (err) {
-                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i] & 0xFF);
             }
         }
     }
-    try {
-        data = JSON.parse(text);
-    } catch (_) {
-        data = text;
-    }
-    if (data === null || data === undefined) {
-        data = text;
-    }
-    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
-    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
+    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+    const isJson = parsed !== null && typeof parsed === "object";
+    const finalBody = isJson ? JSON.stringify(parsed) : text;
+    e.responseHeader().set("Content-Type", "application/json");
+    return e.string(resp.status, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/test-webhook", (e) => {
@@ -362,47 +262,27 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // DEBUG: log do body antes de tentar decodar
-    const _b = resp.body;
-    const _bType = typeof _b;
-    const _bLen = _b ? (_b.length || 0) : 0;
-    let _bPreview = "";
-    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
-    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
-
-    // Tenta varias formas de decodificar Uint8Array -> string
+    // Decodifica Uint8Array -> string usando o helper global toString do JSVM
+    // (documentado na skill pocketbase-jsvm). O log anterior confirmou que
+    // toString funciona, mas e.json(status, obj) nao estava enviando o body.
+    // Workaround: sempre retornar o body como string, com Content-Type JSON
+    // setado no header, e o frontend faz JSON.parse se precisar.
     let text = "";
-    if (_b && _bLen > 0) {
-        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+    if (resp.body && resp.body.length > 0) {
         if (typeof toString === "function") {
-            try { text = toString(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
+            try { text = toString(resp.body); } catch (_) {}
         }
-        // 2) TextDecoder (se existir)
-        if (!text && typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
-            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
-        }
-        // 3) fallback manual: itera bytes
         if (!text) {
-            try {
-                for (let i = 0; i < _bLen; i++) {
-                    text += String.fromCharCode(_b[i] & 0xFF);
-                }
-                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
-            } catch (err) {
-                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i] & 0xFF);
             }
         }
     }
-    try {
-        data = JSON.parse(text);
-    } catch (_) {
-        data = text;
-    }
-    if (data === null || data === undefined) {
-        data = text;
-    }
-    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
-    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
+    // Tenta parsear como JSON; se for, retorna via e.string com Content-Type JSON.
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+    const isJson = parsed !== null && typeof parsed === "object";
+    const finalBody = isJson ? JSON.stringify(parsed) : text;
+    e.responseHeader().set("Content-Type", "application/json");
+    return e.string(resp.status, finalBody);
 });
