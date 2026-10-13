@@ -57,13 +57,14 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string.
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    const isJson = parsed !== null && typeof parsed === "object";
-    const finalBody = isJson ? JSON.stringify(parsed) : text;
-    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
-    return e.string(resp.status, finalBody);
+    // Workaround para bug do JSVM do PB 0.40.5: depois de chamar $http.send,
+    // o e.string nao consegue mais escrever o body (teste isolado sem $http.send
+    // retorna "ok" corretamente). Zerar a referencia ao resp antes do e.string
+    // tenta forcar o GC a liberar o buffer interno que conflita.
+    const statusToReturn = resp.status;
+    const finalBody = text;
+    resp = null;
+    return e.string(statusToReturn, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/verify-code", (e) => {
@@ -103,13 +104,14 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string.
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    const isJson = parsed !== null && typeof parsed === "object";
-    const finalBody = isJson ? JSON.stringify(parsed) : text;
-    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
-    return e.string(resp.status, finalBody);
+    // Workaround para bug do JSVM do PB 0.40.5: depois de chamar $http.send,
+    // o e.string nao consegue mais escrever o body (teste isolado sem $http.send
+    // retorna "ok" corretamente). Zerar a referencia ao resp antes do e.string
+    // tenta forcar o GC a liberar o buffer interno que conflita.
+    const statusToReturn = resp.status;
+    const finalBody = text;
+    resp = null;
+    return e.string(statusToReturn, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/set-webhook", (e) => {
@@ -149,13 +151,14 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string.
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    const isJson = parsed !== null && typeof parsed === "object";
-    const finalBody = isJson ? JSON.stringify(parsed) : text;
-    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
-    return e.string(resp.status, finalBody);
+    // Workaround para bug do JSVM do PB 0.40.5: depois de chamar $http.send,
+    // o e.string nao consegue mais escrever o body (teste isolado sem $http.send
+    // retorna "ok" corretamente). Zerar a referencia ao resp antes do e.string
+    // tenta forcar o GC a liberar o buffer interno que conflita.
+    const statusToReturn = resp.status;
+    const finalBody = text;
+    resp = null;
+    return e.string(statusToReturn, finalBody);
 });
 
 routerAdd("GET", "/api-telegram/sessions", (e) => {
@@ -194,13 +197,14 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string.
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    const isJson = parsed !== null && typeof parsed === "object";
-    const finalBody = isJson ? JSON.stringify(parsed) : text;
-    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
-    return e.string(resp.status, finalBody);
+    // Workaround para bug do JSVM do PB 0.40.5: depois de chamar $http.send,
+    // o e.string nao consegue mais escrever o body (teste isolado sem $http.send
+    // retorna "ok" corretamente). Zerar a referencia ao resp antes do e.string
+    // tenta forcar o GC a liberar o buffer interno que conflita.
+    const statusToReturn = resp.status;
+    const finalBody = text;
+    resp = null;
+    return e.string(statusToReturn, finalBody);
 });
 
 routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
@@ -241,13 +245,14 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string.
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    const isJson = parsed !== null && typeof parsed === "object";
-    const finalBody = isJson ? JSON.stringify(parsed) : text;
-    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
-    return e.string(resp.status, finalBody);
+    // Workaround para bug do JSVM do PB 0.40.5: depois de chamar $http.send,
+    // o e.string nao consegue mais escrever o body (teste isolado sem $http.send
+    // retorna "ok" corretamente). Zerar a referencia ao resp antes do e.string
+    // tenta forcar o GC a liberar o buffer interno que conflita.
+    const statusToReturn = resp.status;
+    const finalBody = text;
+    resp = null;
+    return e.string(statusToReturn, finalBody);
 });
 
 routerAdd("POST", "/api-telegram/test-webhook", (e) => {
@@ -287,11 +292,12 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
             }
         }
     }
-    // Tenta parsear como JSON; se for, retorna via e.string.
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    const isJson = parsed !== null && typeof parsed === "object";
-    const finalBody = isJson ? JSON.stringify(parsed) : text;
-    console.log(`[proxy FINAL] status=${resp.status} bodyLen=${finalBody.length} body=${finalBody.substring(0, 80)}`);
-    return e.string(resp.status, finalBody);
+    // Workaround para bug do JSVM do PB 0.40.5: depois de chamar $http.send,
+    // o e.string nao consegue mais escrever o body (teste isolado sem $http.send
+    // retorna "ok" corretamente). Zerar a referencia ao resp antes do e.string
+    // tenta forcar o GC a liberar o buffer interno que conflita.
+    const statusToReturn = resp.status;
+    const finalBody = text;
+    resp = null;
+    return e.string(statusToReturn, finalBody);
 });
