@@ -61,6 +61,10 @@ class SetWebhookRequest(BaseModel):
     webhook_url: str
 
 
+class TestWebhookRequest(BaseModel):
+    webhook_url: str
+
+
 class DeleteSessionRequest(BaseModel):
     session_id: str
 
@@ -182,6 +186,19 @@ async def handle_new_message(event, session_id: str):
 # Gerenciamento de Clientes Telethon
 # =============================================================================
 
+async def register_message_handler(client, session_id: str):
+    """
+    Anexa o handler de novas mensagens ao client. Chamado tanto por
+    `start_client` (sessões carregadas do disco no boot) quanto por
+    `verify_code` (sessões criadas no signup) — sem isso, o webhook
+    nunca dispara ao receber mensagem em contas recém-criadas.
+    """
+    @client.on(NewMessage(incoming=True))
+    async def handler(event):
+        await handle_new_message(event, session_id)
+    logger.debug(f"📨 Handler NewMessage registrado para {session_id}")
+
+
 async def start_client(session_id: str, session_string: str, phone: str):
     """Inicia um cliente Telethon com event handler"""
     client = TelegramClient(
@@ -195,10 +212,7 @@ async def start_client(session_id: str, session_string: str, phone: str):
         await client.start()
         logger.info(f"✅ Cliente conectado: {session_id} ({phone})")
 
-        # Adiciona event handler
-        @client.on(NewMessage(incoming=True))
-        async def handler(event):
-            await handle_new_message(event, session_id)
+        register_message_handler(client, session_id)
 
         # Armazena cliente ativo
         active_clients[session_id] = client
@@ -448,6 +462,11 @@ async def verify_code(
         del active_clients[session_id]
         del active_clients[hash_key]
 
+        # Registra handler de novas mensagens — sem isso, webhook nunca dispara
+        # em contas criadas via signup (só funciona pra contas carregadas do
+        # disco no boot via initialize_sessions → start_client).
+        register_message_handler(client, final_session_id)
+
         # Registra no PocketBase em background
         background_tasks.add_task(register_account_pb, final_session_id, request.phone_number)
 
@@ -542,8 +561,12 @@ async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth))
 # 6. Testar webhook
 # -----------------------------------------------------------------------------
 @app.post("/api/test-webhook")
-async def test_webhook(webhook_url: str = "", _user: dict = Depends(verify_pb_auth)):
+async def test_webhook(
+    request: TestWebhookRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
     """Envia uma mensagem de teste para o webhook"""
+    webhook_url = request.webhook_url
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
