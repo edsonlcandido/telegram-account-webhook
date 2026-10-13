@@ -1,6 +1,15 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 // =============================================================================
+// TESTE: rota isolada que nao chama $http.send nenhum. Se retornar "ok",
+// o e.string funciona e o problema e especifico do fluxo de proxy.
+// Se nao retornar "ok", o e.string do JSVM do PB 0.40.5 tem bug.
+// =============================================================================
+routerAdd("GET", "/api-telegram-test", (e) => {
+    return e.string(200, "ok");
+});
+
+// =============================================================================
 // Proxy reverso: encaminha /api-telegram/* do frontend (mesma origem) para o
 // servico Telegram API (FastAPI).
 // =============================================================================
