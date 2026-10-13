@@ -277,15 +277,20 @@ AUTH_CACHE_TTL = 300  # 5 minutos
 
 async def verify_pb_auth(authorization: str | None = Header(default=None)) -> dict:
     """
-    Dependency que valida o token PB enviado via header
-    `Authorization: Bearer <jwt>`. Confia no PB como fonte de verdade
-    (chama /api/collections/users/auth-refresh) e cacheia por 5 min pra
-    não martelar o PB a cada request.
+    Dependency que valida o token PB. Aceita tanto `Authorization: Bearer <jwt>`
+    quanto `Authorization: <jwt>` (PB envia so o JWT cru, sem prefixo Bearer).
+    Confia no PB como fonte de verdade (chama /auth-refresh) e cacheia por
+    5 min pra nao martelar o PB a cada request.
     """
-    if not authorization or not authorization.lower().startswith("bearer "):
+    if not authorization:
         raise HTTPException(401, "Não autenticado")
 
-    token = authorization.split(" ", 1)[1].strip()
+    # Aceita "Bearer <token>" ou "<token>" direto
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        token = parts[1].strip()
+    else:
+        token = parts[0].strip()
     now = time.time()
 
     cached = _auth_cache.get(token)
