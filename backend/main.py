@@ -294,7 +294,8 @@ async def verify_pb_auth(authorization: str | None = Header(default=None)) -> di
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
+            # PB 0.40+ mudou o endpoint de GET pra POST. GET agora retorna 404.
+            resp = await client.post(
                 f"{POCKETBASE_URL}/api/collections/users/auth-refresh",
                 headers={"Authorization": f"Bearer {token}"},
             )

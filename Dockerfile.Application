@@ -73,6 +73,9 @@ RUN mkdir -p pb_hooks pb_migrations pb_data pb_public/app
 # Copiar hooks e configurações
 COPY pocketbase/pb_hooks ./pb_hooks
 
+# Copiar migrations (sem isso, collections nao sao criadas no deploy)
+COPY pocketbase/pb_migrations ./pb_migrations
+
 # Copiar builds das aplicações
 COPY --from=landing-builder /app/apps/landing/dist ./pb_public
 COPY --from=web-builder /app/apps/web/dist ./pb_public/app
