@@ -53,8 +53,7 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    e.responseHeader().set("Content-Type", "application/json");
-    return e.string(resp.status, finalBody);
+    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
 });
 
 routerAdd("POST", "/api-telegram/verify-code", (e) => {
@@ -99,8 +98,7 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    e.responseHeader().set("Content-Type", "application/json");
-    return e.string(resp.status, finalBody);
+    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
 });
 
 routerAdd("POST", "/api-telegram/set-webhook", (e) => {
@@ -145,8 +143,7 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    e.responseHeader().set("Content-Type", "application/json");
-    return e.string(resp.status, finalBody);
+    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
 });
 
 routerAdd("GET", "/api-telegram/sessions", (e) => {
@@ -190,8 +187,7 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    e.responseHeader().set("Content-Type", "application/json");
-    return e.string(resp.status, finalBody);
+    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
 });
 
 routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
@@ -237,8 +233,7 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    e.responseHeader().set("Content-Type", "application/json");
-    return e.string(resp.status, finalBody);
+    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
 });
 
 routerAdd("POST", "/api-telegram/test-webhook", (e) => {
@@ -283,6 +278,5 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
     try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
     const isJson = parsed !== null && typeof parsed === "object";
     const finalBody = isJson ? JSON.stringify(parsed) : text;
-    e.responseHeader().set("Content-Type", "application/json");
-    return e.string(resp.status, finalBody);
+    return e.string(resp.status, finalBody, { "Content-Type": "application/json" });
 });
