@@ -186,12 +186,16 @@ async def handle_new_message(event, session_id: str):
 # Gerenciamento de Clientes Telethon
 # =============================================================================
 
-async def register_message_handler(client, session_id: str):
+def register_message_handler(client, session_id: str):
     """
     Anexa o handler de novas mensagens ao client. Chamado tanto por
     `start_client` (sessões carregadas do disco no boot) quanto por
     `verify_code` (sessões criadas no signup) — sem isso, o webhook
     nunca dispara ao receber mensagem em contas recém-criadas.
+
+    NOTA: precisa ser `def` (não `async def`) porque não há `await`
+    dentro. Se fosse `async def` chamado sem `await`, retornaria uma
+    coroutine não-awaitada e o `@client.on(...)` nunca seria aplicado.
     """
     @client.on(NewMessage(incoming=True))
     async def handler(event):
