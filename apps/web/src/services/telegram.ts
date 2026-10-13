@@ -40,6 +40,8 @@ export interface WebhookPayload {
   chat_id: number
   chat_type: 'private' | 'group' | 'supergroup' | 'channel' | 'unknown'
   chat_title: string | null
+  /** true se foi enviada pela própria conta (via celular/desktop/web), false se recebida */
+  outgoing: boolean
   text: string
   sender_id: number | null
   sender_name: string | null

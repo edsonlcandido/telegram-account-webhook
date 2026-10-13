@@ -261,6 +261,7 @@ def _build_message_payload(event, session_id: str) -> dict:
         "chat_id": event.chat_id,
         "chat_type": _chat_type(event),
         "chat_title": chat_title,
+        "outgoing": bool(event.outgoing),  # True se foi enviada pela própria conta
         "text": event.text or "",
         "sender_id": event.sender_id,
         "sender_name": (
@@ -284,6 +285,29 @@ def _build_message_payload(event, session_id: str) -> dict:
 # Gerenciamento de Clientes Telethon
 # =============================================================================
 
+# Cache de IDs que enviamos via /api/send-message — evita que o handler
+# dispare o webhook de volta pra mensagens que NÓS mesmos enviamos pela
+# nossa API (loop infinito: webhook chega → n8n chama /api/send-message →
+# webhook chega de novo → ...).
+#
+# Formato: {message_id: timestamp_envio}. TTL: 10 segundos (Telethon
+# entrega o evento outgoing de forma síncrona logo após o send_message
+# retornar, então 10s é folgado).
+_RECENTLY_SENT_IDS: dict[int, float] = {}
+_RECENTLY_SENT_TTL_SEC = 10.0
+
+
+def _is_recently_sent(message_id: int) -> bool:
+    """True se essa mensagem foi enviada por nós via /api/send-message
+    nos últimos _RECENTLY_SENT_TTL_SEC segundos."""
+    import time as _time
+    now = _time.time()
+    expired = [k for k, v in _RECENTLY_SENT_IDS.items() if now - v > _RECENTLY_SENT_TTL_SEC]
+    for k in expired:
+        _RECENTLY_SENT_IDS.pop(k, None)
+    return message_id in _RECENTLY_SENT_IDS
+
+
 def register_message_handler(client, session_id: str):
     """
     Anexa o handler de novas mensagens ao client. Chamado tanto por
@@ -291,12 +315,23 @@ def register_message_handler(client, session_id: str):
     `verify_code` (sessões criadas no signup) — sem isso, o webhook
     nunca dispara ao receber mensagem em contas recém-criadas.
 
+    Captura TANTO incoming (mensagens de outros) QUANTO outgoing (mensagens
+    enviadas pela própria conta — pelo celular, desktop, web Telegram). O
+    payload inclui `outgoing: bool` pra o consumidor filtrar como quiser.
+
+    Mensagens enviadas via nosso próprio /api/send-message são suprimidas
+    via _is_recently_sent() pra evitar loop com o webhook.
+
     NOTA: precisa ser `def` (não `async def`) porque não há `await`
     dentro. Se fosse `async def` chamado sem `await`, retornaria uma
     coroutine não-awaitada e o `@client.on(...)` nunca seria aplicado.
     """
-    @client.on(NewMessage(incoming=True))
+    @client.on(NewMessage())
     async def handler(event):
+        # Suprime mensagens enviadas por nós mesmos via /api/send-message
+        # pra não gerar loop com o webhook receptor (ex: n8n respondendo).
+        if event.outgoing and _is_recently_sent(event.id):
+            return
         await handle_new_message(event, session_id)
     logger.debug(f"📨 Handler NewMessage registrado para {session_id}")
 
@@ -805,11 +840,18 @@ async def send_message(
     client = active_clients[request.session_id]
 
     try:
+        import time
         kwargs = {}
         if request.reply_to_message_id:
             kwargs["reply_to"] = request.reply_to_message_id
 
         sent = await client.send_message(request.chat_id, request.text, **kwargs)
+
+        # Marca o message_id como "nosso" pra suprimir o webhook que o
+        # handler vai disparar logo em seguida (Telethon emite o evento
+        # outgoing sincronamente). Sem isso, gera loop com o receptor
+        # do webhook (ex: n8n respondendo às nossas mensagens).
+        _RECENTLY_SENT_IDS[sent.id] = time.time()
 
         return {
             "success": True,
