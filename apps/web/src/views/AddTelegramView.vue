@@ -16,45 +16,46 @@ const sessionId = ref('')
 const errorMessage = ref('')
 const countdown = ref(0)
 
-// Validação
+// Normaliza telefone pro formato E.164 (+DDI+DDD+número).
+// Aceita entrada com espaços/traços/parênteses pra facilitar digitação,
+// mas mantém só `+` e dígitos no resultado. Se não começar com `+`,
+// prepende `+55` (assume Brasil) pra cobrir o caso comum.
+const sanitizePhone = (value: string): string => {
+  let cleaned = value.replace(/[^\d+]/g, '')
+  // garante só um `+` no início
+  if (cleaned.includes('+')) {
+    cleaned = '+' + cleaned.replace(/\+/g, '')
+  }
+  // se o user esqueceu o `+`, prepende `+55` (Brasil)
+  if (!cleaned.startsWith('+') && cleaned.length >= 10) {
+    cleaned = '+55' + cleaned
+  }
+  return cleaned
+}
+
+// Validação E.164: + seguido de 10-15 dígitos (sem zero à esquerda depois do DDI)
 const isValidPhone = computed(() => {
-  const cleaned = phone.value.replace(/\D/g, '')
-  return cleaned.length >= 10 && cleaned.length <= 15
+  return /^\+[1-9]\d{9,14}$/.test(phone.value)
 })
 
 const isValidCode = computed(() => {
   return code.value.replace(/\D/g, '').length >= 4
 })
 
-// Formatar telefone
-const formatPhone = (value: string) => {
-  const cleaned = value.replace(/\D/g, '')
-  if (cleaned.length <= 2) return cleaned
-  if (cleaned.length <= 7) return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2)}`
-  return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2, 7)}-${cleaned.slice(7, 11)}`
-}
-
 const handlePhoneInput = (e: Event) => {
   const input = e.target as HTMLInputElement
-  phone.value = formatPhone(input.value)
+  phone.value = sanitizePhone(input.value)
 }
 
 // Enviar código
 const sendCode = async () => {
   if (!isValidPhone.value) return
-  
+
   step.value = 'loading'
   errorMessage.value = ''
-  
-  // Adiciona + se não tiver
-  let fullPhone = phone.value
-  if (!fullPhone.startsWith('+')) {
-    fullPhone = '+55' + fullPhone.replace(/\D/g, '')
-  }
-  if (!fullPhone.startsWith('+')) {
-    fullPhone = '+' + fullPhone
-  }
-  
+
+  const fullPhone = phone.value
+
   try {
     const result = await telegramApi.sendCode(fullPhone)
     phoneCodeHash.value = result.phone_code_hash
@@ -77,15 +78,12 @@ const sendCode = async () => {
 // Verificar código
 const verifyCode = async () => {
   if (!isValidCode.value) return
-  
+
   step.value = 'loading'
   errorMessage.value = ''
-  
-  let fullPhone = phone.value
-  if (!fullPhone.startsWith('+')) {
-    fullPhone = '+' + fullPhone.replace(/\D/g, '')
-  }
-  
+
+  const fullPhone = phone.value
+
   try {
     await telegramApi.verifyCode(fullPhone, code.value)
     step.value = 'success'
@@ -195,12 +193,14 @@ const goBack = () => {
               type="tel"
               :value="phone"
               @input="handlePhoneInput"
-              placeholder="(00) 00000-0000"
+              placeholder="+5511999999999"
+              inputmode="tel"
+              autocomplete="tel"
               class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
               :class="{ 'border-red-300': phone && !isValidPhone }"
             />
             <p v-if="phone && !isValidPhone" class="mt-2 text-sm text-red-500">
-              Digite um número válido com DDD
+              Use o formato internacional com + (ex.: +5511981184099)
             </p>
           </div>
 
