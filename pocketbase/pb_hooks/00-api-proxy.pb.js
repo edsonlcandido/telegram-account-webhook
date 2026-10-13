@@ -1,133 +1,128 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 // =============================================================================
-// Proxy reverso: encaminha as chamadas /api-telegram/* do frontend (mesma
-// origem) para o servico Telegram API (FastAPI) via DNS interno do Docker.
+// Proxy reverso: encaminha /api-telegram/* do frontend (mesma origem) para o
+// servico Telegram API (FastAPI).
 // =============================================================================
-//
-// Por que esse prefixo e nao /api/*:
-//   O namespace /api/ e nativo do PocketBase (/api/collections, /api/health,
-//   /api/records, /api/files, /api/batch, /api/logs, /api/imports, /api/cron,
-//   /api/email-templates, /api/backups, /api/realtime, /api/settings, etc).
-//   Usar /api/* num routerAdd do JSVM mistura o namespace e cria risco de
-//   colisao com rotas nativas adicionadas em versoes futuras do PB. O
-//   prefixo /api-telegram/* isola 100% esse hook do resto.
-//
-// Por que isso existe:
-//   O frontend Vue chama /api-telegram/send-code, /api-telegram/sessions
-//   etc. via URL relativa (mesma origem = este PB). O PB nao implementa
-//   essas rotas, e nao ha middleware HTTP na frente pra repassar. Entao o
-//   hook abaixo intercepta cada /api-telegram/* e faz $http.send pro FastAPI
-//   usando TELEGRAM_API_URL (variavel de ambiente do servico PB no Easypanel).
-//
-// O frontend envia o JWT do PocketBase no header `Authorization: Bearer <jwt>`;
-// este hook apenas repassa o header adiante. O FastAPI valida o token via
-// dependency `verify_pb_auth` (consulta /auth-refresh no proprio PB).
-//
-// Sem Promise / sem await: $http.send e sincrono. Cada handler bloqueia a
-// thread de request do PB, mas como o FastAPI responde rapido (telethon e
-// async, mas a chamada HTTP externa e curta), o custo e desprezivel.
+// ATENCAO: cada handler e self-contained. Nao declaramos funcoes top-level
+// compartilhadas entre routerAdd, porque o JSVM do PB executa cada callback em
+// um VM context separado do pool - referencias a `let`/`const`/`function` do
+// top-level dao `ReferenceError: not defined` em producao (embora funcionem
+// em testes single-thread). Por isso cada handler inline o seu `proxyToFastApi`.
 // =============================================================================
 
-// Resolucao do upstream uma unica vez por handler (top-level let/const NAO
-// sao compartilhados entre handlers no JSVM, conforme nota da skill
-// pocketbase-jsvm - declarar dentro do helper).
-function getUpstreamBase() {
-    let base = $os.getenv("TELEGRAM_API_URL");
-    if (!base) {
-        // Fallback de emergencia caso a env nao esteja configurada no servico.
-        // No Easypanel o DNS interno segue o padrao <project>_<service>.
-        base = "http://eh-tudo_telegram-account-webhook-telegram:80";
-    }
-    return base.replace(/\/+$/, "");
-}
+const UPSTREAM_BASE = $os.getenv("TELEGRAM_API_URL") || "https://eh-tudo-telegram-account-webhook-telegram.aiyfgd.easypanel.host";
 
-function proxyToFastApi(e, method, upstreamPath) {
-    const base = getUpstreamBase();
-    const url = base + upstreamPath;
-
+routerAdd("POST", "/api-telegram/send-code", (e) => {
+    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/send-code";
     const reqInfo = e.requestInfo();
     const headers = { "Content-Type": "application/json" };
-
-    // Repassa o Authorization (header em lowercase no PB >= 0.23).
     if (reqInfo.headers && reqInfo.headers.authorization) {
         headers["Authorization"] = reqInfo.headers.authorization;
     }
-
-    // Repassa o body cru (somente em metodos que carregam body).
-    let body = null;
-    if (method !== "GET" && method !== "DELETE") {
-        if (reqInfo.body && (reqInfo.body.length || 0) > 0) {
-            body = toString(reqInfo.body);
-        }
-    }
-
+    const body = reqInfo.body && (reqInfo.body.length || 0) > 0 ? toString(reqInfo.body) : null;
     let resp;
     try {
-        console.log(`[api-proxy] -> ${method} ${url}`);
-        resp = $http.send({
-            url: url,
-            method: method,
-            body: body,
-            header: headers,
-            timeout: 60,
-        });
-        console.log(`[api-proxy] <- ${method} ${url} status=${resp.status} bodyLen=${(resp.body && resp.body.length) || 0}`);
+        resp = $http.send({ url: url, method: "POST", body: body, header: headers, timeout: 60 });
     } catch (err) {
-        console.log(`[api-proxy] ERRO ${method} ${url}: ${err.message} | stack: ${err.stack || ''}`);
         throw new Error("Servico Telegram API indisponivel");
     }
-
     let data;
-    if (resp.status >= 200 && resp.status < 300) {
-        try {
-            data = resp.json;
-        } catch (_) {
-            data = toString(resp.body);
-        }
-    } else {
-        // Repassa o body de erro como veio (FastAPI retorna {detail: "..."}).
-        try {
-            data = resp.json;
-        } catch (_) {
-            data = { detail: toString(resp.body) };
-        }
-    }
-
-    if (typeof data === "string") {
-        return e.string(resp.status, data);
-    }
-    return e.json(resp.status, data);
-}
-
-// -----------------------------------------------------------------------------
-// Rotas - prefixo /api-telegram/* para isolar do namespace nativo /api/* do PB
-// -----------------------------------------------------------------------------
-
-routerAdd("POST", "/api-telegram/send-code", (e) => {
-    return proxyToFastApi(e, "POST", "/api/send-code");
+    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
 routerAdd("POST", "/api-telegram/verify-code", (e) => {
-    return proxyToFastApi(e, "POST", "/api/verify-code");
+    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/verify-code";
+    const reqInfo = e.requestInfo();
+    const headers = { "Content-Type": "application/json" };
+    if (reqInfo.headers && reqInfo.headers.authorization) {
+        headers["Authorization"] = reqInfo.headers.authorization;
+    }
+    const body = reqInfo.body && (reqInfo.body.length || 0) > 0 ? toString(reqInfo.body) : null;
+    let resp;
+    try {
+        resp = $http.send({ url: url, method: "POST", body: body, header: headers, timeout: 60 });
+    } catch (err) {
+        throw new Error("Servico Telegram API indisponivel");
+    }
+    let data;
+    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
 routerAdd("POST", "/api-telegram/set-webhook", (e) => {
-    return proxyToFastApi(e, "POST", "/api/set-webhook");
+    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/set-webhook";
+    const reqInfo = e.requestInfo();
+    const headers = { "Content-Type": "application/json" };
+    if (reqInfo.headers && reqInfo.headers.authorization) {
+        headers["Authorization"] = reqInfo.headers.authorization;
+    }
+    const body = reqInfo.body && (reqInfo.body.length || 0) > 0 ? toString(reqInfo.body) : null;
+    let resp;
+    try {
+        resp = $http.send({ url: url, method: "POST", body: body, header: headers, timeout: 60 });
+    } catch (err) {
+        throw new Error("Servico Telegram API indisponivel");
+    }
+    let data;
+    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
 routerAdd("GET", "/api-telegram/sessions", (e) => {
-    return proxyToFastApi(e, "GET", "/api/sessions");
+    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/sessions";
+    const reqInfo = e.requestInfo();
+    const headers = { "Content-Type": "application/json" };
+    if (reqInfo.headers && reqInfo.headers.authorization) {
+        headers["Authorization"] = reqInfo.headers.authorization;
+    }
+    let resp;
+    try {
+        resp = $http.send({ url: url, method: "GET", header: headers, timeout: 60 });
+    } catch (err) {
+        throw new Error("Servico Telegram API indisponivel");
+    }
+    let data;
+    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
 routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
-    // Extrai o sessionId do path requisitado (PB nao expoe params nomeados
-    // de forma simples nas rotas custom; caminho mais robusto e split).
     const parts = e.requestInfo().path.split("/").filter(Boolean);
     const sessionId = parts[parts.length - 1] || "";
-    return proxyToFastApi(e, "DELETE", `/api/session/${sessionId}`);
+    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/session/" + sessionId;
+    const reqInfo = e.requestInfo();
+    const headers = { "Content-Type": "application/json" };
+    if (reqInfo.headers && reqInfo.headers.authorization) {
+        headers["Authorization"] = reqInfo.headers.authorization;
+    }
+    let resp;
+    try {
+        resp = $http.send({ url: url, method: "DELETE", header: headers, timeout: 60 });
+    } catch (err) {
+        throw new Error("Servico Telegram API indisponivel");
+    }
+    let data;
+    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
 routerAdd("POST", "/api-telegram/test-webhook", (e) => {
-    return proxyToFastApi(e, "POST", "/api/test-webhook");
+    const url = UPSTREAM_BASE.replace(/\/+$/, "") + "/api/test-webhook";
+    const reqInfo = e.requestInfo();
+    const headers = { "Content-Type": "application/json" };
+    if (reqInfo.headers && reqInfo.headers.authorization) {
+        headers["Authorization"] = reqInfo.headers.authorization;
+    }
+    const body = reqInfo.body && (reqInfo.body.length || 0) > 0 ? toString(reqInfo.body) : null;
+    let resp;
+    try {
+        resp = $http.send({ url: url, method: "POST", body: body, header: headers, timeout: 60 });
+    } catch (err) {
+        throw new Error("Servico Telegram API indisponivel");
+    }
+    let data;
+    try { data = resp.json; } catch (_) { data = toString(resp.body); }
+    return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
