@@ -243,6 +243,19 @@
                   </button>
 
                   <button
+                    @click="openSendModal(session)"
+                    class="inline-flex items-center px-4 py-2 border border-green-300 text-green-600 font-medium rounded-lg hover:bg-green-50 transition-colors"
+                    :disabled="!session.active"
+                    :title="session.active ? 'Enviar mensagem' : 'Sessão offline'"
+                    :class="{ 'opacity-50 cursor-not-allowed': !session.active }"
+                  >
+                    <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
+                    Mensagem
+                  </button>
+
+                  <button
                     @click="confirmDelete(session)"
                     class="inline-flex items-center px-4 py-2 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors"
                     title="Remover conta"
@@ -320,6 +333,86 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- Send Message Modal -->
+    <Teleport to="body">
+      <div v-if="sendModal.show" class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex min-h-full items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 transition-opacity" @click="closeSendModal"></div>
+          <div class="relative bg-white rounded-2xl shadow-xl max-w-lg w-full p-6">
+            <h3 class="text-xl font-bold text-gray-900 mb-1">Enviar Mensagem</h3>
+            <p class="text-sm text-gray-500 mb-6">
+              via {{ sendModal.session?.phone }}
+            </p>
+
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Chat ID ou @username</label>
+                <input
+                  v-model="sendModal.chatId"
+                  type="text"
+                  placeholder="123456789 ou @username"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  :disabled="sendModal.loading"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                  Reply to (message_id, opcional)
+                </label>
+                <input
+                  v-model.number="sendModal.replyTo"
+                  type="number"
+                  placeholder="ex: 12345"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  :disabled="sendModal.loading"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Mensagem</label>
+                <textarea
+                  v-model="sendModal.text"
+                  rows="4"
+                  placeholder="Digite a mensagem..."
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none resize-none"
+                  :disabled="sendModal.loading"
+                ></textarea>
+              </div>
+
+              <div
+                v-if="sendModal.result"
+                class="p-3 rounded-xl"
+                :class="sendModal.result.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'"
+              >
+                <p v-if="sendModal.result.success" class="text-sm text-green-700">
+                  ✓ Mensagem enviada (msg #{{ sendModal.result.message_id }})
+                </p>
+                <p v-else class="text-sm text-red-700">{{ sendModal.result.message }}</p>
+              </div>
+            </div>
+
+            <div class="flex gap-3 mt-6">
+              <button
+                @click="closeSendModal"
+                class="flex-1 px-4 py-3 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+                :disabled="sendModal.loading"
+              >
+                Cancelar
+              </button>
+              <button
+                @click="executeSend"
+                :disabled="!canSend || sendModal.loading"
+                class="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium rounded-xl hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 transition-all"
+              >
+                {{ sendModal.loading ? 'Enviando...' : 'Enviar' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -328,7 +421,7 @@ import { computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useTelegramStore } from '../stores/telegram'
-import type { TelegramSession } from '../services/telegram'
+import { telegramApi, type TelegramSession } from '../services/telegram'
 import {
   UserCircleIcon,
   ArrowRightOnRectangleIcon,
@@ -389,6 +482,61 @@ const executeDelete = async () => {
 function handleLogout() {
   authStore.logout()
   router.push('/login')
+}
+
+// Send message modal
+const sendModal = reactive({
+  show: false,
+  session: null as TelegramSession | null,
+  chatId: '',
+  text: '',
+  replyTo: null as number | null,
+  loading: false,
+  result: null as { success: boolean; message_id?: number; message?: string } | null,
+})
+
+const canSend = computed(() => {
+  return sendModal.chatId.trim() !== '' && sendModal.text.trim() !== ''
+})
+
+function openSendModal(session: TelegramSession) {
+  sendModal.session = session
+  sendModal.chatId = ''
+  sendModal.text = ''
+  sendModal.replyTo = null
+  sendModal.result = null
+  sendModal.show = true
+}
+
+function closeSendModal() {
+  if (sendModal.loading) return
+  sendModal.show = false
+  sendModal.session = null
+}
+
+async function executeSend() {
+  if (!sendModal.session || !canSend.value) return
+
+  sendModal.loading = true
+  sendModal.result = null
+  try {
+    // chat_id aceita numérico OU @username (string começa com @ ou letras)
+    const trimmed = sendModal.chatId.trim()
+    const isNumeric = /^\d+$/.test(trimmed)
+    const chatId: number | string = isNumeric ? Number(trimmed) : trimmed
+
+    const res = await telegramApi.sendMessage(
+      sendModal.session.session_id,
+      chatId,
+      sendModal.text.trim(),
+      sendModal.replyTo ?? undefined,
+    )
+    sendModal.result = { success: res.success, message_id: res.message_id }
+  } catch (error: any) {
+    sendModal.result = { success: false, message: error?.message || 'Erro ao enviar' }
+  } finally {
+    sendModal.loading = false
+  }
 }
 
 // Load sessions on mount

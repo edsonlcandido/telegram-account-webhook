@@ -30,6 +30,36 @@ export interface VerifyCodeResponse {
   message: string
 }
 
+/**
+ * Payload do webhook (enviado pelo backend quando chega mensagem Telegram).
+ * Inclui campos enriquecidos pra permitir responder via /api/send-message.
+ */
+export interface WebhookPayload {
+  session_id: string
+  message_id: number
+  chat_id: number
+  chat_type: 'private' | 'group' | 'supergroup' | 'channel' | 'unknown'
+  chat_title: string | null
+  text: string
+  sender_id: number | null
+  sender_name: string | null
+  sender_username: string | null
+  is_reply: boolean
+  reply_to_message_id: number | null
+  has_media: boolean
+  media_type: string | null
+  media_mime_type: string | null
+  timestamp: string
+}
+
+export interface SendMessageResponse {
+  success: boolean
+  message_id: number
+  chat_id: number
+  timestamp: string
+  is_reply: boolean
+}
+
 // Helper único: injeta o token PB no header `Authorization` em toda chamada.
 // O backend valida via dependency `verify_pb_auth` (consulta /auth-refresh
 // no PB e cacheia por 5 min).
@@ -127,5 +157,26 @@ export const telegramApi = {
       body: JSON.stringify({ webhook_url: webhookUrl }),
     })
     return { success: data.success, status: data.status_code }
+  },
+
+  /**
+   * Envia uma mensagem via uma sessão Telegram.
+   * Aceita chat_id numérico ou @username; reply_to_message_id opcional.
+   */
+  async sendMessage(
+    sessionId: string,
+    chatId: number | string,
+    text: string,
+    replyToMessageId?: number,
+  ): Promise<SendMessageResponse> {
+    return request<SendMessageResponse>('/send-message', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId,
+        chat_id: chatId,
+        text,
+        ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}),
+      }),
+    })
   },
 }

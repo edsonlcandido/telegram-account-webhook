@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from telethon import TelegramClient
 from telethon.events import NewMessage
 from telethon.sessions import StringSession
+from telethon.tl import types as tl_types
 
 import httpx
 
@@ -63,6 +64,13 @@ class SetWebhookRequest(BaseModel):
 
 class TestWebhookRequest(BaseModel):
     webhook_url: str
+
+
+class SendMessageRequest(BaseModel):
+    session_id: str
+    chat_id: int | str  # aceita ID numérico (int) ou @username (str)
+    text: str
+    reply_to_message_id: Optional[int] = None
 
 
 class DeleteSessionRequest(BaseModel):
@@ -152,23 +160,7 @@ async def handle_new_message(event, session_id: str):
             )
             return
 
-        # Extrai dados da mensagem
-        message_data = {
-            "session_id": session_id,
-            "chat_id": event.chat_id,
-            "message_id": event.id,
-            "text": event.text or "",
-            "sender_id": event.sender_id,
-            "timestamp": datetime.now().isoformat(),
-        }
-
-        # Adiciona nome do remetente se disponível
-        if event.sender:
-            message_data["sender_name"] = (
-                event.sender.first_name or ""
-            ) + (
-                f" {event.sender.last_name}" if event.sender.last_name else ""
-            )
+        message_data = _build_message_payload(event, session_id)
 
         # Forward para webhook
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -180,6 +172,112 @@ async def handle_new_message(event, session_id: str):
 
     except Exception as e:
         logger.error(f"Erro ao processar mensagem: {e}")
+
+
+def _classify_media(media) -> tuple[bool, str | None, str | None]:
+    """
+    Classifica o `event.media` (MessageMediaPhoto / MessageMediaDocument / etc.)
+    num tipo simples pro payload do webhook. Retorna (has_media, media_type, mime_type).
+    """
+    if media is None:
+        return False, None, None
+
+    if isinstance(media, tl_types.MessageMediaPhoto):
+        return True, "photo", "image/jpeg"
+
+    if isinstance(media, tl_types.MessageMediaGeo):
+        return True, "geo", None
+
+    if isinstance(media, tl_types.MessageMediaContact):
+        return True, "contact", None
+
+    if isinstance(media, tl_types.MessageMediaPoll):
+        return True, "poll", None
+
+    if isinstance(media, tl_types.MessageMediaDocument):
+        doc = media.document
+        mime = getattr(doc, "mime_type", None)
+        kind = "document"
+        # heurística por mime
+        if mime:
+            if mime.startswith("image/"):
+                kind = "photo" if mime == "image/webp" else "image"
+            elif mime.startswith("video/"):
+                kind = "video"
+            elif mime.startswith("audio/"):
+                kind = "voice" if mime == "audio/ogg" else "audio"
+        # sticker é um documento com attribute Sticker
+        if doc and any(isinstance(a, tl_types.DocumentAttributeSticker) for a in (doc.attributes or [])):
+            kind = "sticker"
+        return True, kind, mime
+
+    # fallback genérico
+    return True, type(media).__name__, None
+
+
+def _chat_type(event) -> str:
+    """
+    Retorna o tipo do chat da mensagem: 'private' | 'group' | 'supergroup' | 'channel'.
+    Usa os helpers do Telethon (is_private, is_group, is_channel).
+    """
+    if event.is_private:
+        return "private"
+    if event.is_channel:
+        return "channel"
+    if event.is_group:
+        return "group"
+    return "unknown"
+
+
+def _build_message_payload(event, session_id: str) -> dict:
+    """
+    Monta o payload enriquecido enviado pro webhook. Inclui:
+    - session_id, message_id, chat_id, text
+    - chat_type (private/group/supergroup/channel) + chat_title quando aplicável
+    - sender_id, sender_name, sender_username
+    - is_reply + reply_to_message_id (pra permitir responder via /api/send-message)
+    - has_media, media_type, media_mime_type
+    - timestamp
+    """
+    has_media, media_type, media_mime = _classify_media(event.media)
+
+    # chat_title: para private é o first_name do peer, senão é o title do chat
+    chat_title = None
+    if event.chat:
+        chat_title = getattr(event.chat, "title", None) or getattr(event.chat, "first_name", None)
+
+    # reply_to: Telethon expõe em event.reply_to e event.reply_to_msg_id (se reply)
+    reply_to_msg_id = getattr(event, "reply_to_msg_id", None)
+    is_reply = reply_to_msg_id is not None
+
+    # sender_username: nem todo User tem; pode ser None
+    sender_username = None
+    if event.sender and getattr(event.sender, "username", None):
+        sender_username = event.sender.username
+
+    return {
+        "session_id": session_id,
+        "message_id": event.id,
+        "chat_id": event.chat_id,
+        "chat_type": _chat_type(event),
+        "chat_title": chat_title,
+        "text": event.text or "",
+        "sender_id": event.sender_id,
+        "sender_name": (
+            (
+                (event.sender.first_name or "")
+                + (f" {event.sender.last_name}" if event.sender.last_name else "")
+            )
+            if event.sender else None
+        ),
+        "sender_username": sender_username,
+        "is_reply": is_reply,
+        "reply_to_message_id": reply_to_msg_id,
+        "has_media": has_media,
+        "media_type": media_type,
+        "media_mime_type": media_mime,
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 # =============================================================================
@@ -677,6 +775,52 @@ async def sync_webhook_pb(session_id: str, webhook_url: str):
                 )
     except Exception as e:
         logger.error(f"Erro ao sincronizar webhook no PB: {e}")
+
+
+# -----------------------------------------------------------------------------
+# 7. Enviar mensagem (reply do webhook)
+# -----------------------------------------------------------------------------
+@app.post("/api/send-message")
+async def send_message(
+    request: SendMessageRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
+    """
+    Envia uma mensagem via uma sessão Telegram autenticada.
+
+    Aceita:
+    - `chat_id` numérico (int) ou @username (str)
+    - `reply_to_message_id` opcional pra responder uma mensagem específica
+
+    Esse é o endpoint que o serviço externo (ex: n8n) chama pra responder
+    depois de receber o webhook de uma mensagem recebida. O payload do
+    webhook já entrega `chat_id` e `message_id` suficientes pra isso.
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Texto vazio")
+
+    if request.session_id not in active_clients:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada ou offline")
+
+    client = active_clients[request.session_id]
+
+    try:
+        kwargs = {}
+        if request.reply_to_message_id:
+            kwargs["reply_to"] = request.reply_to_message_id
+
+        sent = await client.send_message(request.chat_id, request.text, **kwargs)
+
+        return {
+            "success": True,
+            "message_id": sent.id,
+            "chat_id": sent.chat_id,
+            "timestamp": sent.date.isoformat(),
+            "is_reply": bool(kwargs.get("reply_to")),
+        }
+    except Exception as e:
+        logger.error(f"Erro ao enviar mensagem via {request.session_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # =============================================================================
