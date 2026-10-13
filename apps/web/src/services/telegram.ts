@@ -4,7 +4,9 @@ import pb from './pocketbase'
 // passar por hook do PocketBase. O JSVM do PB 0.40.5 tem bug onde
 // e.string/e.json perde o body apos chamar $http.send, o que impossibilita
 // proxy via hook. CORS no FastAPI ja aceita o dominio publico do frontend.
-const apiUrl = 'https://api-telegram.ehtudo.app'
+// Inclui o prefixo /api porque as rotas do FastAPI sao /api/send-code,
+// /api/sessions, etc.
+const apiUrl = 'https://api-telegram.ehtudo.app/api'
 
 // Tipos
 export interface TelegramSession {

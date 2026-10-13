@@ -161,6 +161,63 @@ When adding a hook that calls the FastAPI service, the patterns in
 - `throw new Error("...")` (or specific `*Error` classes) to short-circuit on
   upstream failure.
 
+## Known JSVM bug in PB 0.40.5 — `e.string`/`e.json` silently lose body after `$http.send`
+
+**Symptom:** A route handler calls `$http.send(...)`, gets a valid response
+(headers, `resp.json`, `resp.body` all populated — `console.log` proves it),
+then returns via `e.json(status, data)` or `e.string(status, str)`. The HTTP
+response status is correct, but `Content-Length: 0` and the body is empty
+in the browser / curl. No exception, no log error.
+
+**Reproducer (definitive):**
+
+```js
+// Rota A: sem $http.send — funciona normal
+routerAdd("GET", "/api-telegram-test", (e) => {
+    return e.string(200, "ok");
+});  // -> curl: 200, body "ok" ✓
+
+// Rota B: com $http.send — body some
+routerAdd("GET", "/api-telegram/sessions", (e) => {
+    const resp = $http.send({ url: "...", method: "GET", timeout: 30 });
+    // resp.body tem os bytes, toString(resp.body) decodifica certo,
+    // JSON.parse funciona, log mostra o data type=object.
+    return e.string(resp.status, toString(resp.body));
+});  // -> curl: 200, body ""  ✗
+```
+
+The same handler without `$http.send` returns the body correctly. The PB
+`panicRecover` middleware doesn't fire — the request just completes
+successfully with an empty body.
+
+**Workarounds tried, none worked:**
+- `resp = null` before `e.string` to force GC — no effect.
+- `e.json(status, data)` instead of `e.string` — same empty body.
+- `e.responseHeader().set("Content-Type", ...)` — throws panic (method
+  doesn't exist on this JSVM).
+- `e.string(status, body, { "Content-Type": "application/json" })` (3-arg
+  form) — same empty body, 3rd arg may be ignored.
+- Logging `resp.status` and `finalBody` — confirms the values reach the
+  return, but the body still doesn't go out.
+
+**What works:** Expose the upstream as a public domain and have the
+frontend call it directly (cross-origin). The FastAPI here is reachable at
+`https://api-telegram.ehtudo.app` and the frontend's `services/telegram.ts`
+sets `apiUrl = "https://api-telegram.ehtudo.app/api"`. CORS in the FastAPI
+is configured via `ALLOWED_ORIGINS=https://telegram-webhook.ehtudo.app`.
+
+**Workaround for other projects (not used here):** Use `onRecordAfterCreateRequest`
+on a "commands" collection — frontend creates a record, the hook fires on
+the record-write event (different code path that doesn't hit this bug), makes
+the upstream call, updates the record with the response, and the frontend
+subscribes via PB realtime or polls the record. More plumbing, but bypasses
+the bug entirely.
+
+**Tracking:** Worth checking PB release notes / Goja issues for a fix in
+later versions. When upgrading PB, re-test `e.string` after `$http.send` in
+a route handler and consider re-enabling the hook (currently saved as
+`00-api-proxy.pb.js.disabled` in this repo for reference).
+
 ## Deploy procedure (this project)
 
 1. `git add pocketbase/pb_hooks/<name>.pb.js`
