@@ -62,6 +62,11 @@ class SetWebhookRequest(BaseModel):
     webhook_url: str
 
 
+class ToggleWebhookRequest(BaseModel):
+    session_id: str
+    enabled: bool
+
+
 class TestWebhookRequest(BaseModel):
     webhook_url: str
 
@@ -86,13 +91,14 @@ def get_session_file(session_id: str) -> Path:
     return SESSIONS_DIR / f"{session_id}.session"
 
 
-def save_session(session_id: str, session_string: str, phone: str, webhook_url: str = None):
+def save_session(session_id: str, session_string: str, phone: str, webhook_url: str = None, webhook_enabled: bool = True):
     """Salva sessão no sistema de arquivos"""
     session_file = get_session_file(session_id)
     data = {
         "session_string": session_string,
         "phone": phone,
         "webhook_url": webhook_url,
+        "webhook_enabled": webhook_enabled,
         "created_at": datetime.now().isoformat()
     }
     session_file.write_text(json.dumps(data))
@@ -137,12 +143,17 @@ async def handle_new_message(event, session_id: str):
 
         # Busca webhook da sessão
         webhook_url = None
+        webhook_enabled = True
         if session_id in active_clients:
             session_file = get_session_file(session_id)
             if session_file.exists():
                 data = json.loads(session_file.read_text())
                 webhook_url = data.get("webhook_url")
-                logger.debug(f"webhook_url lido do arquivo: {webhook_url}")
+                webhook_enabled = data.get("webhook_enabled", True)
+                logger.debug(
+                    f"webhook_url={webhook_url} enabled={webhook_enabled} "
+                    f"lidos do arquivo"
+                )
             else:
                 logger.warning(
                     f"⚠️ Sessão {session_id} em active_clients mas arquivo "
@@ -157,6 +168,13 @@ async def handle_new_message(event, session_id: str):
         if not webhook_url:
             logger.warning(
                 f"⏭️ Sessão {session_id} sem webhook configurado, ignorando"
+            )
+            return
+
+        if not webhook_enabled:
+            logger.debug(
+                f"⏸ Sessão {session_id} com webhook pausado, ignorando "
+                f"msg #{event.id}"
             )
             return
 
@@ -642,10 +660,12 @@ async def set_webhook(
     if session_file.exists():
         data = json.loads(session_file.read_text())
         data["webhook_url"] = request.webhook_url
+        # garante campo webhook_enabled (default True) se ainda não existe
+        data.setdefault("webhook_enabled", True)
         session_file.write_text(json.dumps(data))
     else:
         # Cria arquivo se não existir
-        save_session(session_id, "", "", request.webhook_url)
+        save_session(session_id, "", "", request.webhook_url, webhook_enabled=True)
 
     # Sincroniza no PocketBase em background (não bloqueia a resposta)
     background_tasks.add_task(sync_webhook_pb, session_id, request.webhook_url)
@@ -653,6 +673,48 @@ async def set_webhook(
     logger.info(f"🔗 Webhook configurado para {session_id}: {request.webhook_url}")
 
     return {"success": True, "webhook_url": request.webhook_url}
+
+
+# -----------------------------------------------------------------------------
+# 3b. Pausar/retomar dispatch do webhook (sem mexer na URL)
+# -----------------------------------------------------------------------------
+@app.post("/api/toggle-webhook")
+async def toggle_webhook(
+    request: ToggleWebhookRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
+    """
+    Liga/desliga o dispatch do webhook de uma sessão sem remover a URL
+    configurada. Útil pra silenciar notificações temporariamente.
+
+    Quando `enabled=false`, mensagens continuam sendo recebidas pelo client
+    Telethon mas o handler NÃO chama o webhook.
+    """
+    session_id = request.session_id
+
+    if session_id not in active_clients:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    session_file = get_session_file(session_id)
+    if not session_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Sessão sem arquivo de configuração",
+        )
+
+    data = json.loads(session_file.read_text())
+    data["webhook_enabled"] = request.enabled
+    session_file.write_text(json.dumps(data))
+
+    state = "▶ retomado" if request.enabled else "⏸ pausado"
+    logger.info(f"{state} webhook de {session_id}")
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "webhook_enabled": request.enabled,
+        "webhook_url": data.get("webhook_url"),
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -669,6 +731,7 @@ async def list_sessions(_user: dict = Depends(verify_pb_auth)):
                 "session_id": s["session_id"],
                 "phone": s.get("phone", ""),
                 "webhook_url": s.get("webhook_url"),
+                "webhook_enabled": s.get("webhook_enabled", True),
                 "active": s["session_id"] in active_clients,
                 "created_at": s.get("created_at")
             }
@@ -886,6 +949,7 @@ async def admin_list_sessions(_user: dict = Depends(verify_pb_auth)):
                 "session_id": session_id,
                 "phone": data.get("phone"),
                 "webhook_url": data.get("webhook_url"),
+                "webhook_enabled": data.get("webhook_enabled", True),
                 "created_at": data.get("created_at"),
                 "session_string_length": len(data.get("session_string", "")),
                 "active": session_id in active_clients,

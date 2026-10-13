@@ -256,6 +256,26 @@
                   </button>
 
                   <button
+                    @click="toggleWebhook(session)"
+                    :disabled="togglingId === session.session_id || !session.webhook_url"
+                    :title="!session.webhook_url
+                      ? 'Configure o webhook primeiro'
+                      : (session.webhook_enabled ? 'Pausar envio ao webhook' : 'Retomar envio ao webhook')"
+                    :class="session.webhook_enabled
+                      ? 'border-purple-300 text-purple-600 hover:bg-purple-50'
+                      : 'border-orange-300 text-orange-600 hover:bg-orange-50'"
+                    class="inline-flex items-center px-4 py-2 border font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <svg v-if="session.webhook_enabled" class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <svg v-else class="h-4 w-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    {{ togglingId === session.session_id ? '...' : (session.webhook_enabled ? 'Pausar' : 'Retomar') }}
+                  </button>
+
+                  <button
                     @click="confirmDelete(session)"
                     class="inline-flex items-center px-4 py-2 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors"
                     title="Remover conta"
@@ -417,7 +437,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useTelegramStore } from '../stores/telegram'
@@ -475,6 +495,21 @@ const executeDelete = async () => {
     console.error('Erro ao remover sessão:', error)
   } finally {
     deleteModal.loading = false
+  }
+}
+
+// Toggle webhook dispatch (play/pause) — não mexe na URL, só liga/desliga o envio
+const togglingId = ref<string | null>(null)
+async function toggleWebhook(session: TelegramSession) {
+  togglingId.value = session.session_id
+  try {
+    await telegramApi.toggleWebhook(session.session_id, !session.webhook_enabled)
+    await telegramStore.fetchSessions()
+  } catch (error) {
+    console.error('Erro ao alternar webhook:', error)
+    alert('Erro ao alternar webhook. Tente novamente.')
+  } finally {
+    togglingId.value = null
   }
 }
 

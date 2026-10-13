@@ -13,6 +13,7 @@ export interface TelegramSession {
   session_id: string
   phone: string
   webhook_url?: string
+  webhook_enabled: boolean
   active: boolean
   created_at: string
 }
@@ -147,6 +148,27 @@ export const telegramApi = {
   async deleteSession(sessionId: string): Promise<{ success: boolean }> {
     return request<{ success: boolean }>(`/session/${sessionId}`, {
       method: 'DELETE',
+    })
+  },
+
+  /**
+   * Liga/desliga o dispatch do webhook sem mexer na URL configurada.
+   * Útil pra silenciar notificações temporariamente.
+   */
+  async toggleWebhook(sessionId: string, enabled: boolean): Promise<{
+    success: boolean
+    session_id: string
+    webhook_enabled: boolean
+    webhook_url: string | null
+  }> {
+    return request<{
+      success: boolean
+      session_id: string
+      webhook_enabled: boolean
+      webhook_url: string | null
+    }>('/toggle-webhook', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, enabled }),
     })
   },
 
