@@ -26,6 +26,11 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
     } catch (err) {
         throw new Error("Servico Telegram API indisponivel");
     }
+    // Protege contra status 0 do $http.send (timeout/DNS/connection refused).
+    // e.json(0, ...) causa panic no Go: "invalid WriteHeader code 0".
+    if (!resp || resp.status < 100) {
+        return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
+    }
     let data;
     try { data = resp.json; } catch (_) { data = toString(resp.body); }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
@@ -45,6 +50,11 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
         resp = $http.send({ url: url, method: "POST", body: body, header: headers, timeout: 60 });
     } catch (err) {
         throw new Error("Servico Telegram API indisponivel");
+    }
+    // Protege contra status 0 do $http.send (timeout/DNS/connection refused).
+    // e.json(0, ...) causa panic no Go: "invalid WriteHeader code 0".
+    if (!resp || resp.status < 100) {
+        return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
     try { data = resp.json; } catch (_) { data = toString(resp.body); }
@@ -66,6 +76,11 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
     } catch (err) {
         throw new Error("Servico Telegram API indisponivel");
     }
+    // Protege contra status 0 do $http.send (timeout/DNS/connection refused).
+    // e.json(0, ...) causa panic no Go: "invalid WriteHeader code 0".
+    if (!resp || resp.status < 100) {
+        return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
+    }
     let data;
     try { data = resp.json; } catch (_) { data = toString(resp.body); }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
@@ -84,6 +99,11 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
         resp = $http.send({ url: url, method: "GET", header: headers, timeout: 60 });
     } catch (err) {
         throw new Error("Servico Telegram API indisponivel");
+    }
+    // Protege contra status 0 do $http.send (timeout/DNS/connection refused).
+    // e.json(0, ...) causa panic no Go: "invalid WriteHeader code 0".
+    if (!resp || resp.status < 100) {
+        return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
     try { data = resp.json; } catch (_) { data = toString(resp.body); }
@@ -106,6 +126,11 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
     } catch (err) {
         throw new Error("Servico Telegram API indisponivel");
     }
+    // Protege contra status 0 do $http.send (timeout/DNS/connection refused).
+    // e.json(0, ...) causa panic no Go: "invalid WriteHeader code 0".
+    if (!resp || resp.status < 100) {
+        return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
+    }
     let data;
     try { data = resp.json; } catch (_) { data = toString(resp.body); }
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
@@ -125,6 +150,11 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
         resp = $http.send({ url: url, method: "POST", body: body, header: headers, timeout: 60 });
     } catch (err) {
         throw new Error("Servico Telegram API indisponivel");
+    }
+    // Protege contra status 0 do $http.send (timeout/DNS/connection refused).
+    // e.json(0, ...) causa panic no Go: "invalid WriteHeader code 0".
+    if (!resp || resp.status < 100) {
+        return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
     try { data = resp.json; } catch (_) { data = toString(resp.body); }
