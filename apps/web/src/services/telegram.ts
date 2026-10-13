@@ -40,7 +40,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (pb.authStore.token) {
-    headers['Authorization'] = pb.authStore.token
+    headers['Authorization'] = `Bearer ${pb.authStore.token}`
   }
 
   const response = await fetch(`${apiUrl}${path}`, {
