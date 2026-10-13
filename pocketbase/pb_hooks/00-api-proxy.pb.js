@@ -32,17 +32,36 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
-    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
-    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    // DEBUG: log do body antes de tentar decodar
+    const _b = resp.body;
+    const _bType = typeof _b;
+    const _bLen = _b ? (_b.length || 0) : 0;
+    let _bPreview = "";
+    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
+    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
+
+    // Tenta varias formas de decodificar Uint8Array -> string
     let text = "";
-    if (resp.body && resp.body.length > 0) {
-        if (typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+    if (_b && _bLen > 0) {
+        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+        if (typeof toString === "function") {
+            try { text = toString(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
         }
+        // 2) TextDecoder (se existir)
+        if (!text && typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
+        }
+        // 3) fallback manual: itera bytes
         if (!text) {
-            for (let i = 0; i < resp.body.length; i++) {
-                text += String.fromCharCode(resp.body[i]);
+            try {
+                for (let i = 0; i < _bLen; i++) {
+                    text += String.fromCharCode(_b[i] & 0xFF);
+                }
+                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
+            } catch (err) {
+                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
             }
         }
     }
@@ -54,6 +73,7 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
     if (data === null || data === undefined) {
         data = text;
     }
+    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -78,17 +98,36 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
-    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
-    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    // DEBUG: log do body antes de tentar decodar
+    const _b = resp.body;
+    const _bType = typeof _b;
+    const _bLen = _b ? (_b.length || 0) : 0;
+    let _bPreview = "";
+    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
+    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
+
+    // Tenta varias formas de decodificar Uint8Array -> string
     let text = "";
-    if (resp.body && resp.body.length > 0) {
-        if (typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+    if (_b && _bLen > 0) {
+        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+        if (typeof toString === "function") {
+            try { text = toString(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
         }
+        // 2) TextDecoder (se existir)
+        if (!text && typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
+        }
+        // 3) fallback manual: itera bytes
         if (!text) {
-            for (let i = 0; i < resp.body.length; i++) {
-                text += String.fromCharCode(resp.body[i]);
+            try {
+                for (let i = 0; i < _bLen; i++) {
+                    text += String.fromCharCode(_b[i] & 0xFF);
+                }
+                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
+            } catch (err) {
+                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
             }
         }
     }
@@ -100,6 +139,7 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
     if (data === null || data === undefined) {
         data = text;
     }
+    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -124,17 +164,36 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
-    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
-    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    // DEBUG: log do body antes de tentar decodar
+    const _b = resp.body;
+    const _bType = typeof _b;
+    const _bLen = _b ? (_b.length || 0) : 0;
+    let _bPreview = "";
+    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
+    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
+
+    // Tenta varias formas de decodificar Uint8Array -> string
     let text = "";
-    if (resp.body && resp.body.length > 0) {
-        if (typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+    if (_b && _bLen > 0) {
+        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+        if (typeof toString === "function") {
+            try { text = toString(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
         }
+        // 2) TextDecoder (se existir)
+        if (!text && typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
+        }
+        // 3) fallback manual: itera bytes
         if (!text) {
-            for (let i = 0; i < resp.body.length; i++) {
-                text += String.fromCharCode(resp.body[i]);
+            try {
+                for (let i = 0; i < _bLen; i++) {
+                    text += String.fromCharCode(_b[i] & 0xFF);
+                }
+                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
+            } catch (err) {
+                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
             }
         }
     }
@@ -146,6 +205,7 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
     if (data === null || data === undefined) {
         data = text;
     }
+    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -169,17 +229,36 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
-    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
-    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    // DEBUG: log do body antes de tentar decodar
+    const _b = resp.body;
+    const _bType = typeof _b;
+    const _bLen = _b ? (_b.length || 0) : 0;
+    let _bPreview = "";
+    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
+    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
+
+    // Tenta varias formas de decodificar Uint8Array -> string
     let text = "";
-    if (resp.body && resp.body.length > 0) {
-        if (typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+    if (_b && _bLen > 0) {
+        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+        if (typeof toString === "function") {
+            try { text = toString(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
         }
+        // 2) TextDecoder (se existir)
+        if (!text && typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
+        }
+        // 3) fallback manual: itera bytes
         if (!text) {
-            for (let i = 0; i < resp.body.length; i++) {
-                text += String.fromCharCode(resp.body[i]);
+            try {
+                for (let i = 0; i < _bLen; i++) {
+                    text += String.fromCharCode(_b[i] & 0xFF);
+                }
+                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
+            } catch (err) {
+                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
             }
         }
     }
@@ -191,6 +270,7 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
     if (data === null || data === undefined) {
         data = text;
     }
+    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -216,17 +296,36 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
-    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
-    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    // DEBUG: log do body antes de tentar decodar
+    const _b = resp.body;
+    const _bType = typeof _b;
+    const _bLen = _b ? (_b.length || 0) : 0;
+    let _bPreview = "";
+    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
+    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
+
+    // Tenta varias formas de decodificar Uint8Array -> string
     let text = "";
-    if (resp.body && resp.body.length > 0) {
-        if (typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+    if (_b && _bLen > 0) {
+        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+        if (typeof toString === "function") {
+            try { text = toString(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
         }
+        // 2) TextDecoder (se existir)
+        if (!text && typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
+        }
+        // 3) fallback manual: itera bytes
         if (!text) {
-            for (let i = 0; i < resp.body.length; i++) {
-                text += String.fromCharCode(resp.body[i]);
+            try {
+                for (let i = 0; i < _bLen; i++) {
+                    text += String.fromCharCode(_b[i] & 0xFF);
+                }
+                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
+            } catch (err) {
+                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
             }
         }
     }
@@ -238,6 +337,7 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
     if (data === null || data === undefined) {
         data = text;
     }
+    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
 
@@ -262,17 +362,36 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
-    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
-    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    // DEBUG: log do body antes de tentar decodar
+    const _b = resp.body;
+    const _bType = typeof _b;
+    const _bLen = _b ? (_b.length || 0) : 0;
+    let _bPreview = "";
+    try { _bPreview = String(_b).substring(0, 50); } catch (_) {}
+    console.log(`[proxy DEBUG] bodyType=${_bType} bodyLen=${_bLen} stringified=${_bPreview}`);
+
+    // Tenta varias formas de decodificar Uint8Array -> string
     let text = "";
-    if (resp.body && resp.body.length > 0) {
-        if (typeof TextDecoder !== "undefined") {
-            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+    if (_b && _bLen > 0) {
+        // 1) helper global toString (documentado na skill pocketbase-jsvm)
+        if (typeof toString === "function") {
+            try { text = toString(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] toString -> len=${text.length} preview=${text.substring(0, 50)}`);
         }
+        // 2) TextDecoder (se existir)
+        if (!text && typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(_b); } catch (_) {}
+            console.log(`[proxy DEBUG] TextDecoder -> len=${text.length}`);
+        }
+        // 3) fallback manual: itera bytes
         if (!text) {
-            for (let i = 0; i < resp.body.length; i++) {
-                text += String.fromCharCode(resp.body[i]);
+            try {
+                for (let i = 0; i < _bLen; i++) {
+                    text += String.fromCharCode(_b[i] & 0xFF);
+                }
+                console.log(`[proxy DEBUG] manualLoop -> len=${text.length} preview=${text.substring(0, 50)}`);
+            } catch (err) {
+                console.log(`[proxy DEBUG] manualLoop ERROR: ${err.message}`);
             }
         }
     }
@@ -284,5 +403,6 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
     if (data === null || data === undefined) {
         data = text;
     }
+    console.log(`[proxy DEBUG] final data type=${typeof data} len=${typeof data === "string" ? data.length : "n/a"}`);
     return typeof data === "string" ? e.string(resp.status, data) : e.json(resp.status, data);
 });
