@@ -66,7 +66,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div>
 
       <!-- Hero Image/Mockup -->
-      <div class="relative max-w-3xl mx-auto animate-bounce">
+      <div class="relative max-w-3xl mx-auto">
         <div class="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
           <div class="bg-gray-100 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
             <div class="flex gap-1.5">
