@@ -440,9 +440,15 @@ async def verify_code(
 # 3. Configurar webhook para sessão
 # -----------------------------------------------------------------------------
 @app.post("/api/set-webhook")
-async def set_webhook(request: SetWebhookRequest, _user: dict = Depends(verify_pb_auth)):
+async def set_webhook(
+    request: SetWebhookRequest,
+    background_tasks: BackgroundTasks,
+    _user: dict = Depends(verify_pb_auth),
+):
     """
     Configura URL do webhook para uma sessão.
+    O arquivo de sessão é a source of truth; o PB é sincronizado em background
+    pra manter a collection `telegram_sessions` consistente (pra auditoria/UI).
     """
     session_id = request.session_id
 
@@ -450,7 +456,7 @@ async def set_webhook(request: SetWebhookRequest, _user: dict = Depends(verify_p
     if session_id not in active_clients:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
-    # Atualiza arquivo de sessão
+    # Atualiza arquivo de sessão (source of truth)
     session_file = get_session_file(session_id)
     if session_file.exists():
         data = json.loads(session_file.read_text())
@@ -459,6 +465,9 @@ async def set_webhook(request: SetWebhookRequest, _user: dict = Depends(verify_p
     else:
         # Cria arquivo se não existir
         save_session(session_id, "", "", request.webhook_url)
+
+    # Sincroniza no PocketBase em background (não bloqueia a resposta)
+    background_tasks.add_task(sync_webhook_pb, session_id, request.webhook_url)
 
     logger.info(f"🔗 Webhook configurado para {session_id}: {request.webhook_url}")
 
@@ -532,7 +541,7 @@ async def test_webhook(webhook_url: str = "", _user: dict = Depends(verify_pb_au
 # Funções Auxiliares
 # =============================================================================
 
-async def register_account_pb(session_id: str, phone: str):
+async def register_account_pb(session_id: str, phone: str, webhook_url: str | None = None):
     """
     Registra metadata da conta no PocketBase (collection `telegram_sessions`).
     A StringSession NÃO é enviada — ela fica só no FA em `/app/sessions/*.json`,
@@ -548,6 +557,8 @@ async def register_account_pb(session_id: str, phone: str):
         payload["api_id"] = API_ID
     if API_HASH:
         payload["api_hash"] = API_HASH
+    if webhook_url:
+        payload["webhook_url"] = webhook_url
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -563,6 +574,57 @@ async def register_account_pb(session_id: str, phone: str):
             )
     except Exception as e:
         logger.error(f"Erro ao registrar no PocketBase: {e}")
+
+
+async def sync_webhook_pb(session_id: str, webhook_url: str):
+    """
+    Sincroniza o webhook_url no PB via PATCH no record correspondente ao
+    `session_id` (UNIQUE INDEX). O arquivo em /app/sessions/*.json continua
+    sendo a source of truth — esta função só mantém o PB consistente pra
+    auditoria/dashboards externos.
+
+    Se `webhook_url` for vazia, manda null pra limpar o campo no PB (campo
+    `url` do PB rejeita string vazia, mas aceita null).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 1. Acha o record pelo session_id
+            list_resp = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={"filter": f'session_id="{session_id}"', "perPage": 1},
+            )
+            if list_resp.status_code != 200:
+                logger.error(
+                    f"PB falhou ao listar telegram_sessions: "
+                    f"{list_resp.status_code} {list_resp.text}"
+                )
+                return
+
+            items = list_resp.json().get("items", [])
+            if not items:
+                logger.warning(
+                    f"Nenhum record em telegram_sessions pra {session_id} "
+                    f"— webhook salvo só no arquivo (registro PB será criado "
+                    f"no próximo verify-code)"
+                )
+                return
+
+            record_id = items[0]["id"]
+
+            # 2. PATCH o webhook_url (null se vazio, pra limpar)
+            patch_resp = await client.patch(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{record_id}",
+                json={"webhook_url": webhook_url if webhook_url else None},
+            )
+            if 200 <= patch_resp.status_code < 300:
+                logger.info(f"🔄 Webhook sincronizado no PB: {session_id}")
+            else:
+                logger.error(
+                    f"PB recusou PATCH webhook: {patch_resp.status_code} "
+                    f"{patch_resp.text}"
+                )
+    except Exception as e:
+        logger.error(f"Erro ao sincronizar webhook no PB: {e}")
 
 
 # =============================================================================
