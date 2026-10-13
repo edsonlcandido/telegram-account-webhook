@@ -64,6 +64,7 @@ function proxyToFastApi(e, method, upstreamPath) {
 
     let resp;
     try {
+        console.log(`[api-proxy] -> ${method} ${url}`);
         resp = $http.send({
             url: url,
             method: method,
@@ -71,8 +72,9 @@ function proxyToFastApi(e, method, upstreamPath) {
             header: headers,
             timeout: 60,
         });
+        console.log(`[api-proxy] <- ${method} ${url} status=${resp.status} bodyLen=${(resp.body && resp.body.length) || 0}`);
     } catch (err) {
-        console.log(`[api-proxy] upstream ${method} ${upstreamPath} falhou: ${err.message}`);
+        console.log(`[api-proxy] ERRO ${method} ${url}: ${err.message} | stack: ${err.stack || ''}`);
         throw new Error("Servico Telegram API indisponivel");
     }
 
