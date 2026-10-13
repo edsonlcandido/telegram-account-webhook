@@ -32,7 +32,20 @@ routerAdd("POST", "/api-telegram/send-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    const text = toString(resp.body);
+    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
+    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
+    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    let text = "";
+    if (resp.body && resp.body.length > 0) {
+        if (typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+        }
+        if (!text) {
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i]);
+            }
+        }
+    }
     try {
         data = JSON.parse(text);
     } catch (_) {
@@ -65,7 +78,20 @@ routerAdd("POST", "/api-telegram/verify-code", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    const text = toString(resp.body);
+    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
+    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
+    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    let text = "";
+    if (resp.body && resp.body.length > 0) {
+        if (typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+        }
+        if (!text) {
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i]);
+            }
+        }
+    }
     try {
         data = JSON.parse(text);
     } catch (_) {
@@ -98,7 +124,20 @@ routerAdd("POST", "/api-telegram/set-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    const text = toString(resp.body);
+    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
+    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
+    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    let text = "";
+    if (resp.body && resp.body.length > 0) {
+        if (typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+        }
+        if (!text) {
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i]);
+            }
+        }
+    }
     try {
         data = JSON.parse(text);
     } catch (_) {
@@ -130,7 +169,20 @@ routerAdd("GET", "/api-telegram/sessions", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    const text = toString(resp.body);
+    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
+    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
+    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    let text = "";
+    if (resp.body && resp.body.length > 0) {
+        if (typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+        }
+        if (!text) {
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i]);
+            }
+        }
+    }
     try {
         data = JSON.parse(text);
     } catch (_) {
@@ -164,7 +216,20 @@ routerAdd("DELETE", "/api-telegram/session/{sessionId}", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    const text = toString(resp.body);
+    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
+    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
+    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    let text = "";
+    if (resp.body && resp.body.length > 0) {
+        if (typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+        }
+        if (!text) {
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i]);
+            }
+        }
+    }
     try {
         data = JSON.parse(text);
     } catch (_) {
@@ -197,7 +262,20 @@ routerAdd("POST", "/api-telegram/test-webhook", (e) => {
         return e.json(502, { detail: "Upstream Telegram API nao respondeu (status 0)" });
     }
     let data;
-    const text = toString(resp.body);
+    // Decodifica Uint8Array -> string sem depender de `toString` global do JSVM
+    // (em algumas builds do Goja/PB 0.40, `toString(Uint8Array)` retorna string
+    // vazia, o que fazia o body do upstream ser perdido no proxy).
+    let text = "";
+    if (resp.body && resp.body.length > 0) {
+        if (typeof TextDecoder !== "undefined") {
+            try { text = new TextDecoder("utf-8").decode(resp.body); } catch (_) {}
+        }
+        if (!text) {
+            for (let i = 0; i < resp.body.length; i++) {
+                text += String.fromCharCode(resp.body[i]);
+            }
+        }
+    }
     try {
         data = JSON.parse(text);
     } catch (_) {
