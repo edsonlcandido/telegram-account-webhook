@@ -365,7 +365,7 @@ async def send_code(request: SendCodeRequest, _user: dict = Depends(verify_pb_au
             "success": True,
             "session_id": session_id,
             "phone_code_hash": result.phone_code_hash,
-            "expires": result.expire_interval
+            "expires": result.timeout
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
