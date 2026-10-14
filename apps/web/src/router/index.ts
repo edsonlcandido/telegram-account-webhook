@@ -4,6 +4,7 @@ import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import AddTelegramView from '../views/AddTelegramView.vue'
 import WebhookConfigView from '../views/WebhookConfigView.vue'
+import ApiDocsView from '../views/ApiDocsView.vue'
 
 const router = createRouter({
   history: createWebHistory('/app/'),
@@ -36,6 +37,12 @@ const router = createRouter({
       component: WebhookConfigView,
       meta: { requiresAuth: true },
       props: true,
+    },
+    {
+      path: '/docs',
+      name: 'api-docs',
+      component: ApiDocsView,
+      meta: { requiresAuth: true },
     },
   ],
 })

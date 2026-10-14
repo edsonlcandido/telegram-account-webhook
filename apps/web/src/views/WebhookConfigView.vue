@@ -75,10 +75,20 @@ const goBack = () => {
               <span class="font-semibold">Voltar</span>
             </button>
           </div>
-          <div class="flex items-center">
+          <div class="flex items-center gap-4">
             <span class="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
               Configurar Webhook
             </span>
+            <router-link
+              to="/docs"
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-blue-600 bg-gray-100 hover:bg-blue-50 rounded-lg transition-colors"
+              title="Ver documentação completa"
+            >
+              <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Ver docs
+            </router-link>
           </div>
         </div>
       </div>
