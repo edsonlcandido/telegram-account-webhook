@@ -30,6 +30,14 @@ import httpx
 API_ID = int(os.getenv("TG_API_ID", "0"))
 API_HASH = os.getenv("TG_API_HASH", "")
 POCKETBASE_URL = os.getenv("POCKETBASE_URL", "http://localhost:8090")
+# Service token do PB: JWT de um user dedicado (criar no PB admin UI, ex:
+# service@telegram-webhook.local). Usado nas chamadas internas ao PB
+# que rodam SEM request HTTP no contexto (handler de mensagem do
+# Telethon, jobs em background) — não dá pra repassar o token do user
+# porque esses fluxos não têm user. Sem o service token, o PB rejeita
+# com 401 e `_get_active_webhooks` retorna [], silenciosamente
+# impedindo o webhook forwarding de funcionar.
+POCKETBASE_SERVICE_TOKEN = os.getenv("POCKETBASE_SERVICE_TOKEN", "")
 SESSIONS_DIR = Path("/app/sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
 
@@ -156,25 +164,50 @@ def delete_session_file(session_id: str):
 # explicitamente o cache pra reduzir a janela.
 _WEBHOOK_CACHE: Dict[str, tuple[float, list[dict]]] = {}
 _WEBHOOK_CACHE_TTL_SEC = 30.0
+# Flag pra logar o warning de service token ausente SÓ UMA VEZ no startup,
+# não toda mensagem (evita flood no log).
+_service_token_warned: bool = False
+
+
+def _service_pb_headers() -> dict:
+    """Header pro PB com o service token. Vazio se não configurado."""
+    if POCKETBASE_SERVICE_TOKEN:
+        return {"Authorization": POCKETBASE_SERVICE_TOKEN}
+    return {}
 
 
 async def _get_active_webhooks(session_id: str) -> list[dict]:
     """Busca webhooks ativos (enabled=true) da sessão, com cache 30s."""
     import time as _time
+    global _service_token_warned
     now = _time.time()
     cached = _WEBHOOK_CACHE.get(session_id)
     if cached and (now - cached[0]) < _WEBHOOK_CACHE_TTL_SEC:
         return cached[1]
+
+    headers = _service_pb_headers()
+    if not headers and not _service_token_warned:
+        logger.warning(
+            "POCKETBASE_SERVICE_TOKEN não configurado — webhook forwarding "
+            "vai falhar com 401. Crie um user de service no PB e adicione "
+            "o JWT em POCKETBASE_SERVICE_TOKEN."
+        )
+        _service_token_warned = True
 
     # 1) Acha o record da sessão no PB
     async with httpx.AsyncClient(timeout=10.0) as client:
         sess_resp = await client.get(
             f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
             params={"filter": f'session_id="{session_id}"', "perPage": 1},
+            headers=headers,
         )
         sess_items = sess_resp.json().get("items", [])
         if not sess_items:
-            _WEBHOOK_CACHE[session_id] = (now, [])
+            # Sessão não existe no PB (saiu do ar) — cacheia [] por 30s
+            # pra não martelar o PB a cada mensagem. Mas só se o request
+            # não falhou por auth.
+            if sess_resp.status_code == 200:
+                _WEBHOOK_CACHE[session_id] = (now, [])
             return []
         pb_session_id = sess_items[0]["id"]
 
@@ -182,7 +215,15 @@ async def _get_active_webhooks(session_id: str) -> list[dict]:
         wh_resp = await client.get(
             f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
             params={"filter": f'session="{pb_session_id}" && enabled=true', "perPage": 500},
+            headers=headers,
         )
+        if wh_resp.status_code != 200:
+            # 401/403/500: NÃO cacheia — tenta de novo na próxima mensagem.
+            # Senão fica 30s preso no estado "envenenado".
+            logger.warning(
+                f"PB recusou listagem de webhooks: {wh_resp.status_code} {wh_resp.text[:200]}"
+            )
+            return []
         webhooks = wh_resp.json().get("items", [])
 
     _WEBHOOK_CACHE[session_id] = (now, webhooks)
