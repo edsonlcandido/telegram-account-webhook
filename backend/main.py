@@ -602,6 +602,34 @@ async def verify_pb_auth(authorization: str | None = Header(default=None)) -> di
         raise HTTPException(503, "Serviço de autenticação indisponível")
 
 
+async def get_user_token(authorization: str | None = Header(default=None)) -> str:
+    """
+    Extrai o JWT cru do header Authorization pra repassar nas chamadas
+    internas ao PocketBase.
+
+    Por que separado de `verify_pb_auth`: aquele VALIDA o token (chama
+    /auth-refresh no PB, cacheia 5min); este só EXTRAI o string do header
+    sem chamar nada. Os endpoints que fazem proxy ao PB precisam dos dois
+    — o validate garante que o user está logado, o extract dá o string
+    pra mandar de volta pro PB.
+
+    O PB NÃO aceita o prefixo "Bearer" no header — só lê
+    `Authorization: <token>` cru. Se receber "Bearer xxx" o parse
+    interno não reconhece o token.
+    """
+    if not authorization:
+        raise HTTPException(401, "Não autenticado")
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip()
+    return parts[0].strip()
+
+
+def pb_headers(user_token: str) -> dict:
+    """Monta o header que o PB aceita: `Authorization: <token>` (sem Bearer)."""
+    return {"Authorization": user_token}
+
+
 # =============================================================================
 # Rotas
 # =============================================================================
@@ -754,13 +782,14 @@ async def verify_code(
 # 3. Webhooks (multi-webhook por sessão, com filtros)
 # -----------------------------------------------------------------------------
 
-async def _resolve_pb_session_id(session_id: str) -> str | None:
+async def _resolve_pb_session_id(session_id: str, user_token: str | None = None) -> str | None:
     """Resolve o `session_id` (string única) pro `id` do PB (record id)."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
                 params={"filter": f'session_id="{session_id}"', "perPage": 1},
+                headers=pb_headers(user_token) if user_token else None,
             )
         items = r.json().get("items", [])
         return items[0]["id"] if items else None
@@ -769,12 +798,13 @@ async def _resolve_pb_session_id(session_id: str) -> str | None:
         return None
 
 
-async def _resolve_session_id_from_pb(pb_id: str) -> str | None:
+async def _resolve_session_id_from_pb(pb_id: str, user_token: str | None = None) -> str | None:
     """Resolve o `id` do PB pra `session_id` (string)."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
+                headers=pb_headers(user_token) if user_token else None,
             )
         if r.status_code == 200:
             return r.json().get("session_id")
@@ -788,8 +818,9 @@ async def _resolve_session_id_from_pb(pb_id: str) -> str | None:
 async def list_session_webhooks(
     session_id: str,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
-    pb_id = await _resolve_pb_session_id(session_id)
+    pb_id = await _resolve_pb_session_id(session_id, user_token)
     if not pb_id:
         return {"webhooks": []}
     try:
@@ -797,6 +828,7 @@ async def list_session_webhooks(
             r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 params={"filter": f'session="{pb_id}"', "perPage": 500, "sort": "created"},
+                headers=pb_headers(user_token),
             )
         items = r.json().get("items", [])
         for w in items:
@@ -812,8 +844,9 @@ async def create_webhook(
     session_id: str,
     request: CreateWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
-    pb_id = await _resolve_pb_session_id(session_id)
+    pb_id = await _resolve_pb_session_id(session_id, user_token)
     if not pb_id:
         raise HTTPException(404, "Sessão não encontrada no PB")
 
@@ -823,6 +856,7 @@ async def create_webhook(
             cnt_r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 params={"filter": f'session="{pb_id}"', "perPage": 500, "fields": "id"},
+                headers=pb_headers(user_token),
             )
         existing_count = len(cnt_r.json().get("items", []))
     except Exception:
@@ -844,6 +878,7 @@ async def create_webhook(
             r = await client.post(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 json=payload,
+                headers=pb_headers(user_token),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
@@ -863,6 +898,7 @@ async def update_webhook(
     webhook_id: str,
     request: UpdateWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
     payload = {k: v for k, v in request.model_dump().items() if v is not None}
     if not payload:
@@ -873,11 +909,12 @@ async def update_webhook(
             r = await client.patch(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
                 json=payload,
+                headers=pb_headers(user_token),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
         result = r.json()
-        sid = await _resolve_session_id_from_pb(result.get("session", ""))
+        sid = await _resolve_session_id_from_pb(result.get("session", ""), user_token)
         if sid:
             _invalidate_webhook_cache(sid)
         return result
@@ -892,19 +929,22 @@ async def update_webhook(
 async def delete_webhook(
     webhook_id: str,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r_get = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                headers=pb_headers(user_token),
             )
             if r_get.status_code != 200:
                 raise HTTPException(404, "Webhook não encontrado")
             wh = r_get.json()
-            sid = await _resolve_session_id_from_pb(wh.get("session", ""))
+            sid = await _resolve_session_id_from_pb(wh.get("session", ""), user_token)
 
             r = await client.delete(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                headers=pb_headers(user_token),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
@@ -923,19 +963,22 @@ async def toggle_webhook(
     webhook_id: str,
     request: ToggleWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r_get = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                headers=pb_headers(user_token),
             )
             if r_get.status_code != 200:
                 raise HTTPException(404, "Webhook não encontrado")
-            sid = await _resolve_session_id_from_pb(r_get.json().get("session", ""))
+            sid = await _resolve_session_id_from_pb(r_get.json().get("session", ""), user_token)
 
             r = await client.patch(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
                 json={"enabled": request.enabled},
+                headers=pb_headers(user_token),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
@@ -953,11 +996,13 @@ async def toggle_webhook(
 async def test_webhook_endpoint(
     webhook_id: str,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r_get = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                headers=pb_headers(user_token),
             )
             if r_get.status_code != 200:
                 raise HTTPException(404, "Webhook não encontrado")
@@ -989,10 +1034,11 @@ async def update_session(
     session_id: str,
     request: UpdateSessionRequest,
     _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
 ):
     if request.name is None:
         raise HTTPException(400, "Nada pra atualizar")
-    pb_id = await _resolve_pb_session_id(session_id)
+    pb_id = await _resolve_pb_session_id(session_id, user_token)
     if not pb_id:
         raise HTTPException(404, "Sessão não encontrada no PB")
     try:
@@ -1000,6 +1046,7 @@ async def update_session(
             r = await client.patch(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
                 json={"name": request.name},
+                headers=pb_headers(user_token),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
@@ -1021,7 +1068,10 @@ async def refresh_webhook_cache(_user: dict = Depends(verify_pb_auth)):
 # 4. Listar sessões
 # -----------------------------------------------------------------------------
 @app.get("/api/sessions")
-async def list_sessions(_user: dict = Depends(verify_pb_auth)):
+async def list_sessions(
+    _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
+):
     """Lista todas as sessões (arquivo é source of truth pra credencial; PB pra metadados)."""
     saved = load_sessions()
 
@@ -1035,6 +1085,7 @@ async def list_sessions(_user: dict = Depends(verify_pb_auth)):
             sess_resp = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
                 params={"perPage": 500, "fields": "id,session_id,name"},
+                headers=pb_headers(user_token),
             )
             for s in sess_resp.json().get("items", []):
                 sid = s.get("session_id", "")
@@ -1044,6 +1095,7 @@ async def list_sessions(_user: dict = Depends(verify_pb_auth)):
             wh_resp = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 params={"perPage": 500, "fields": "session"},
+                headers=pb_headers(user_token),
             )
             for w in wh_resp.json().get("items", []):
                 sid = w.get("session", "")
@@ -1121,7 +1173,7 @@ async def register_account_pb(
     # Se receber "Bearer xxx" o parse interno não reconhece o token.
     headers: dict = {}
     if user_token:
-        headers["Authorization"] = user_token
+        headers = pb_headers(user_token)
 
     try:
         # Se já existe record com esse session_id, atualiza (mantém id e created);
