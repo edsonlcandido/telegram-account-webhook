@@ -69,11 +69,9 @@ function buildPayload(msg, session, wh) {
 }
 
 onRecordAfterCreateSuccess((e) => {
-  // Continua o save ANTES de fazer HTTP — assim o record existe no PB
-  // mesmo se o webhook demorar/falhar. e.next() é síncrono mas o resto
-  // do body também é (a chamada HTTP é bloqueante, mas o response já
-  // foi mandado pro cliente que fez o INSERT).
-  e.next()
+  // O record JÁ foi salvo quando esse hook dispara (é "AfterSuccess").
+  // Fazemos o trabalho de distribuir pros webhooks e atualizar o record
+  // com o resultado. Se o save inicial falhar, esse hook não é chamado.
 
   const msg = e.record
   const sessionRel = msg.getString("session") // PB id do record da sessão
