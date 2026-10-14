@@ -1,55 +1,66 @@
 # Telegram Account Webhook
 
-Vincule contas Telegram e receba mensagens em tempo real via webhook.
+Vincule contas Telegram, receba mensagens em tempo real via webhook (com filtros) e responda pela mesma sessão — tudo pelo painel web.
 
 ## O que faz
 
-- **Vincular conta Telegram**: phone_number + código de verificação
-- **Receber mensagens**: webhook URL para cada conta
-- **Gerenciar múltiplas contas**: painel unificado
+- **Vincular conta Telegram**: phone + código de verificação, com **apelido opcional** (ex.: "Vendas", "Suporte") pra distinguir contas além do número.
+- **Múltiplos webhooks por conta**: cada sessão Telegram pode ter N webhooks (ex.: um pro n8n, outro pro Slack, outro pro seu backend custom).
+- **Filtros por webhook**: direção (`incoming`/`outgoing`/`all`), tipo de chat (`private`/`group`/`supergroup`/`channel`/`all`), match de texto (`equals`/`contains`).
+- **Responder mensagens**: endpoint `POST /api/send-message` reusa a sessão Telegram pra responder o chat de origem (loop com n8n / Make / etc.).
+- **Painel web único**: gerencia todas as contas, webhooks e apelidos.
 
 ## Arquitetura
+
+Dois serviços no Easypanel, ambos construídos a partir deste repo (`build.type=dockerfile`). A rede Docker interna conecta eles; o proxy do Easypanel termina TLS e expõe só o serviço Application.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          Easypanel VPS                                   │
 │                                                                         │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
-│  │  Serviço 1: Application (Dockerfile.Application)                   │ │
-│  │  ────────────────────────────────────────────────────────────────  │ │
-│  │  • PocketBase (Database + Auth)         → :8090                  │ │
-│  │  • Landing Page (Vue)                   → /                       │ │
-│  │  • Web App (Vue)                        → /app/                   │ │
+│  │  Serviço 1: telegram-account-webhook                               │ │
+│  │  Dockerfile.Application — uma única imagem servindo 3 coisas:     │ │
+│  │    • PocketBase 0.40.5 (DB + Auth + Admin UI)   → :8090           │ │
+│  │    • Landing page Vue (build estático)          → /                │ │
+│  │    • Web app Vue (SPA)                          → /app/            │ │
 │  │                                                                   │ │
-│  │  Variáveis de ambiente:                                          │ │
-│  │  • TELEGRAM_API_URL=http://telegram-api:8000                    │ │
+│  │  Env vars:                                                        │ │
+│  │    TELEGRAM_API_URL=http://telegram-api:8000    # hostname Docker │ │
+│  │    ALLOWED_ORIGINS=https://telegram-webhook.ehtudo.app           │ │
 │  │                                                                   │ │
-│  │  URL Pública: https://telegram-webhook.ehtudo.app/                │ │
+│  │  Volume: pb_data → /app/pb_data                                   │ │
+│  │  URL pública: https://telegram-webhook.ehtudo.app                 │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 │                                    │                                    │
-│                                    │ HTTP (interno Docker)              │
+│                                    │ HTTP (rede Docker interna)         │
 │                                    ▼                                    │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
-│  │  Serviço 2: Telegram API (Dockerfile.Telegram)                   │ │
-│  │  ────────────────────────────────────────────────────────────────  │ │
-│  │  • FastAPI (REST API)                     → :8000                 │ │
-│  │  • Telethon (Sessões Telegram)                                  │ │
+│  │  Serviço 2: telegram-account-webhook-telegram                     │ │
+│  │  Dockerfile.Telegram                                              │ │
+│  │    • FastAPI (REST API)                         → :8000           │ │
+│  │    • Telethon (cliente Telegram)                                │ │
 │  │                                                                   │ │
-│  │  URL Interna: http://telegram-api:8000                           │ │
+│  │  Env vars:                                                        │ │
+│  │    POCKETBASE_URL=http://pocketbase:8090       # hostname Docker │ │
+│  │    TG_API_ID=<my.telegram.org>                                   │ │
+│  │    TG_API_HASH=<my.telegram.org>                                 │ │
+│  │    ALLOWED_ORIGINS=https://telegram-webhook.ehtudo.app           │ │
+│  │                                                                   │ │
+│  │  Volume: session → /app/sessions/  (credenciais StringSession)   │ │
+│  │  Sem URL pública — chamado só pela rede interna.                 │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Comunicação Interna Docker
+**Quem fala com quem:**
 
-O PocketBase (serviço Application) se comunica com o Telegram API via **rede Docker interna**:
+- O **frontend** (Vue) fala com **PocketBase** (mesma origem no proxy do Easypanel → sem CORS).
+- O **PocketBase** (no serviço Application) faz proxy das chamadas de webhook/mensagens via FastAPI em `http://telegram-api:8000` (hostname Docker do serviço Telegram, configurado em `TELEGRAM_API_URL`).
+- O **FastAPI** (serviço Telegram) lê do `POCKETBASE_URL` pra listar webhooks ativos e atualizar a coleção `telegram_sessions` ao criar conta.
 
-```
-Application → http://telegram-api:8000/api/...
-```
-
-**Importante:** A variável `TELEGRAM_API_URL` deve ser configurada no serviço Application.
+**Importante:** `TELEGRAM_API_URL` deve ser o **hostname Docker interno** (`telegram-api:8000`), não a URL pública. O hostname do serviço Telegram no docker-compose é `telegram-api`; no Easypanel é resolvido pela rede interna do projeto.
 
 ---
 
@@ -57,160 +68,208 @@ Application → http://telegram-api:8000/api/...
 
 ```
 telegram-account-webhook/
-├── Dockerfile.Application          # PocketBase + Frontend Vue
-├── Dockerfile.Telegram            # FastAPI + Telethon
+├── Dockerfile.Application          # PocketBase + Landing + Web app
+├── Dockerfile.Telegram             # FastAPI + Telethon
+├── docker-compose.yml              # dev local (2 serviços)
 ├── backend/
-│   ├── main.py                    # API FastAPI
-│   ├── requirements.txt           # Deps Python
-│   └── .env.example              # Template de variáveis
+│   ├── main.py                     # FastAPI: auth, webhooks, send-message
+│   ├── requirements.txt
+│   └── .env.example
 ├── apps/
-│   ├── landing/                   # Landing page Vue
-│   └── web/                       # Web app Vue
+│   ├── landing/                    # Landing page Vue (Vite)
+│   └── web/                        # Web app Vue (Vite)
+│       └── src/
+│           ├── services/telegram.ts
+│           ├── stores/telegram.ts
+│           ├── views/
+│           │   ├── DashboardView.vue
+│           │   ├── AddTelegramView.vue
+│           │   ├── WebhooksListView.vue
+│           │   └── ApiDocsView.vue
+│           └── router/
 ├── pocketbase/
-│   ├── pb_hooks/                 # Hooks customizados (SPA routing)
+│   ├── pb_hooks/                   # Hooks JS do PB
 │   │   └── main.pb.js
-│   └── pb_migrations/            # Migrations banco
-├── .agents/
-│   └── skills/
-│       └── pocketbase-gotchas.md # Gotchas PocketBase 0.40.x
-├── docker-compose.yml             # Desenvolvimento local
-├── README.md
-└── AGENTS.md
+│   ├── pb_migrations/              # Migrations JS (PB 0.40+)
+│   ├── pb_data/                    # volume runtime (gitignored, exceto .gitkeep e types.d.ts)
+│   └── pocketbase.exe              # binário PB 0.40.5 (gitignored)
+├── scripts/
+│   ├── pocketbase.js               # baixa + roda PB local
+│   ├── copy-landing.js
+│   └── copy-app.js
+├── .agents/skills/                 # Skills específicas do projeto
+│   ├── pocketbase-migrations/SKILL.md
+│   ├── pocketbase-jsvm/SKILL.md
+│   └── pocketbase-gotchas.md
+├── AGENTS.md                       # contexto operacional pra agentes
+└── README.md
 ```
 
 ---
 
 ## Variáveis de Ambiente
 
-### Serviço 1: Application (PocketBase)
+### Serviço `telegram-account-webhook` (Application)
 
-| Variável | Descrição | Exemplo |
-|----------|-----------|---------|
-| `TELEGRAM_API_URL` | URL do serviço Telegram API (rede interna) | `http://telegram-api:8000` |
-| `VITE_POCKETBASE_URL` | URL pública do PocketBase (para o frontend) | `https://telegram-webhook.ehtudo.app` |
+| Variável | Obrigatória | Descrição | Exemplo prod |
+|---|---|---|---|
+| `TELEGRAM_API_URL` | sim | URL do FastAPI (hostname Docker interno) | `http://telegram-api:8000` |
+| `ALLOWED_ORIGINS` | sim | Lista CSV de origens CORS permitidas | `https://telegram-webhook.ehtudo.app` |
+| `VITE_POCKETBASE_URL` | não | Bake-time. Se vazio, frontend usa `window.location.origin` (mesma origem no Easypanel) | `https://telegram-webhook.ehtudo.app` |
 
-### Serviço 2: Telegram API
+### Serviço `telegram-account-webhook-telegram` (Telegram API)
 
-| Variável | Descrição | Exemplo |
-|----------|-----------|---------|
-| `POCKETBASE_URL` | URL do PocketBase (rede interna) | `http://pocketbase:8090` |
-| `TG_API_ID` | API ID do Telegram | `123456` |
-| `TG_API_HASH` | API Hash do Telegram | `abc123...` |
+| Variável | Obrigatória | Descrição | Exemplo prod |
+|---|---|---|---|
+| `POCKETBASE_URL` | sim | URL do PocketBase (hostname Docker interno) | `http://pocketbase:8090` |
+| `TG_API_ID` | sim | API ID do app Telegram (my.telegram.org) | `37377307` |
+| `TG_API_HASH` | sim | API Hash do app Telegram | `a700ecef...` |
+| `ALLOWED_ORIGINS` | sim | Lista CSV de origens CORS | `https://telegram-webhook.ehtudo.app` |
+
+### Arquivo `backend/.env.example`
+
+Espelha as vars acima pra dev local. Copie pra `backend/.env` e preencha.
 
 ---
 
 ## Tech Stack
 
 | Camada | Tecnologia |
-|--------|-----------|
-| Frontend | Vue 3 + TypeScript + Tailwind CSS |
-| Backend API | Python + FastAPI + Telethon |
-| Database | PocketBase 0.40.5 |
-| Deploy | Easypanel (2 serviços separados) |
+|---|---|
+| Frontend | Vue 3 + TypeScript + Vite + Tailwind CSS |
+| Backend API | Python 3 + FastAPI + Telethon |
+| Database / Auth | PocketBase 0.40.5 (SQLite + Go) |
+| Deploy | Easypanel (2 serviços no mesmo projeto, build from source) |
 
 ---
 
 ## Desenvolvimento Local
 
 ```bash
-# 1. Clone e entre no projeto
+# 1. Clone
 git clone https://github.com/edsonlcandido/telegram-account-webhook.git
 cd telegram-account-webhook
 
-# 2. Configure variáveis de ambiente
+# 2. Configure variáveis do backend
 cp backend/.env.example backend/.env
-# Edite backend/.env com suas credenciais Telegram
+# Edite backend/.env: TG_API_ID, TG_API_HASH (obtenha em my.telegram.org)
 
-# 3. Suba tudo com Docker Compose
+# 3. Suba PB + Telegram API com docker-compose
 docker compose up -d
+# PB em http://localhost:8090  |  API em http://localhost:8000
 
-# 4. Acesse
-# - Landing Page: http://localhost:5173
-# - Web App: http://localhost:5174
-# - PocketBase: http://localhost:8090
+# 4. (Opcional) Rode o frontend em modo dev
+cd apps/web && npm install && npm run dev   # http://localhost:5174
+cd ../landing && npm install && npm run dev # http://localhost:5173
+
+# Alternativa: rode só o PB local (sem Docker) pra mexer nas migrations
+node scripts/pocketbase.js                  # baixa + serve em :8090
 ```
+
+O `docker-compose.yml` define dois serviços (`pocketbase` na porta 8090, `telegram-api` na 8000). Os frontends Vue sobem separados via `npm run dev` e o Vite faz proxy pro PB.
 
 ---
 
 ## Deploy no Easypanel
 
-### Passo 1: Configurar GitHub Secrets
+**Pré-requisito:** os dois serviços já existem no Easypanel, ambos com `build.type=dockerfile` apontando pro Dockerfile certo, e volumes `pb_data` (Application) e `session` (Telegram) já criados.
 
-No repositório GitHub, adicione estes secrets:
+> **Não tem GitHub Actions nesse projeto.** Os serviços no Easypanel estão com `autoDeploy: false` — push pro `main` sozinho **não rebuilda nada**.
 
-| Secret | Valor |
-|--------|-------|
-| `GITHUB_TOKEN` | Automático (já vem com GitHub Actions) |
-| `TG_API_ID` | Seu API ID do Telegram (my.telegram.org) |
-| `TG_API_HASH` | Seu API Hash do Telegram |
-| `EASYPANEL_APPLICATION_WEBHOOK` | Webhook URL do serviço Application |
-| `EASYPANEL_TELEGRAM_WEBHOOK` | Webhook URL do serviço Telegram API |
+Para rebuildar e fazer deploy:
 
-### Passo 2: Criar os serviços no Easypanel
+```powershell
+# Application (webapp + PB)
+$body = '{}'
+Invoke-WebRequest -Method POST `
+  -Uri 'http://82.112.244.9:3000/api/deploy/<token-do-servico-application>' `
+  -ContentType 'application/json' -Body $body -UseBasicParsing
 
-**Serviço 1 - Application:**
-- Nome: `telegram-account-webhook`
-- Imagem: `ghcr.io/edsonlcandido/telegram-account-webhook/application:latest`
-- Porta: 8090
-- Volume: `pb_data` → `/app/pb_data`
-- **Variáveis de ambiente:**
-  - `TELEGRAM_API_URL=http://telegram-api:8000`
-
-**Serviço 2 - Telegram API:**
-- Nome: `telegram-api`
-- Imagem: `ghcr.io/edsonlcandido/telegram-account-webhook/telegram:latest`
-- Porta: 8000
-- Variáveis de ambiente:
-  - `POCKETBASE_URL=http://pocketbase:8090`
-  - `TG_API_ID=<seu_api_id>`
-  - `TG_API_HASH=<seu_api_hash>`
-
-### Passo 3: Push para deploy
-
-```bash
-git push origin main
+# Telegram API (backend)
+Invoke-WebRequest -Method POST `
+  -Uri 'http://82.112.244.9:3000/api/deploy/<token-do-servico-telegram>' `
+  -ContentType 'application/json' -Body $body -UseBasicParsing
 ```
 
-O GitHub Actions vai:
-1. Buildar e pushar a imagem `application` no ghcr.io
-2. Buildar e pushar a imagem `telegram` no ghcr.io
-3. Disparar os webhooks do Easypanel para cada serviço
+Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa via MCP: `deployAppService` com `projectName=eh-tudo` e `serviceName=telegram-account-webhook` (e `telegram-account-webhook-telegram` pro backend).
+
+### Após o deploy
+
+1. Confirmar que o PB aplicou as migrations novas no boot (ver log de startup do serviço Application).
+2. O backend não precisa de restart se você só mexeu em migrations ou front — só reinicie se o `main.py` mudou.
 
 ---
 
-## API Endpoints
+## API Endpoints (Telegram API — `https://api-telegram.ehtudo.app`)
 
-### Telegram API (serviço interno)
+| Método | Endpoint | Auth | Descrição |
+|---|---|---|---|
+| `GET` | `/health` | — | Health check (`active_sessions`, `saved_sessions`) |
+| `POST` | `/api/send-code` | sim | Inicia login: envia SMS/código pro `phone_number` |
+| `POST` | `/api/verify-code` | sim | Verifica código + 2FA (se houver), cria sessão, aceita `name` (apelido opcional) |
+| `GET` | `/api/sessions` | sim | Lista sessões (com `name` e `webhook_count`) |
+| `DELETE` | `/api/session/{session_id}` | sim | Remove sessão (desconecta + apaga arquivo) |
+| `PATCH` | `/api/sessions/{session_id}` | sim | Renomeia sessão (`name`) |
+| `GET` | `/api/sessions/{session_id}/webhooks` | sim | Lista webhooks da sessão |
+| `POST` | `/api/sessions/{session_id}/webhooks` | sim | Cria webhook (com filtros) |
+| `PATCH` | `/api/webhooks/{webhook_id}` | sim | Edita webhook (URL, filtros, enabled) |
+| `DELETE` | `/api/webhooks/{webhook_id}` | sim | Remove webhook |
+| `POST` | `/api/webhooks/{webhook_id}/toggle` | sim | Liga/desliga sem deletar |
+| `POST` | `/api/webhooks/{webhook_id}/test` | sim | Dispara evento de teste (payload completo) |
+| `POST` | `/api/webhooks/refresh-cache` | sim | Invalida cache de webhooks (admin) |
+| `POST` | `/api/send-message` | sim | Envia mensagem via sessão (`chat_id` + `text` + `reply_to_message_id` opcional) |
+| `GET` | `/api/admin/sessions` | sim | Lista arquivos em `/app/sessions/*.json` (debug) |
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| GET | `/health` | Health check |
-| POST | `/api/send-code` | Envia código de verificação |
-| POST | `/api/verify-code` | Verifica código e cria sessão |
-| POST | `/api/set-webhook` | Configura webhook para conta |
-| DELETE | `/api/session` | Remove sessão |
-| GET | `/api/sessions` | Lista sessões ativas |
+**Auth:** `Authorization: Bearer <jwt-do-pocketbase>`. O middleware `verify_pb_auth` valida contra o PB.
 
-### PocketBase (Admin)
+### Webhook payload (POST recebido pelo seu endpoint)
 
-- Admin UI: `https://telegram-webhook.ehtudo.app/_/`
-- API: `https://telegram-webhook.ehtudo.app/api/`
+```json
+{
+  "event": "new_message",
+  "session_id": "account_5511932055173",
+  "message": {
+    "id": 12345,
+    "text": "oi, tudo bem?",
+    "date": "2026-10-13T22:00:00Z",
+    "is_outgoing": false
+  },
+  "chat": {
+    "id": -1001234567890,
+    "type": "supergroup",
+    "title": "Nome do grupo",
+    "username": null
+  },
+  "sender": {
+    "id": 987654321,
+    "username": "fulano",
+    "first_name": "Fulano",
+    "is_bot": false
+  }
+}
+```
+
+Anti-loop: o serviço **ignora mensagens cujo `id` está em `_RECENTLY_SENT_IDS`** (mensagens enviadas pelo próprio `/api/send-message`).
 
 ---
 
 ## Coleções PocketBase
 
-- `users`: Usuários (auth nativo)
-- `telegram_sessions`: phone, session_id, name (alias opcional, editável)
-  - `StringSession` (credencial) só em `/app/sessions/*.json` no container `telegram-api`.
-- `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
-  - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
+- `users`: Auth nativo do PB (email/senha → JWT).
+- `telegram_sessions`: `phone`, `session_id` (chave do arquivo de credencial), `name` (apelido opcional editável).
+  - **`StringSession` (credencial) NÃO fica aqui** — só no `/app/sessions/*.json` no container `telegram-account-webhook-telegram`.
+  - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container, não no PB.
+- `telegram_webhooks`: `name`, `enabled`, `url` + filtros (`direction`, `chat_type`, `text_match`).
+  - Relation com `telegram_sessions` (`cascadeDelete`). Vários webhooks por sessão.
+  - O PB é source of truth — o arquivo é só pra carregar o cliente Telethon de volta no boot.
+
+Schema inicial em `pocketbase/pb_migrations/1791780600_create_telegram_sessions.js`. Mudanças posteriores (alias, webhooks, etc.) via migrations idempotentes (regra: nunca editar uma migration depois de commitada — sempre criar uma nova).
 
 ---
 
 ## Status
 
-⚠️ **Em desenvolvimento**
+🚧 **Em desenvolvimento ativo.**
 
 ## License
 
