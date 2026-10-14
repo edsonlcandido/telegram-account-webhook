@@ -201,8 +201,10 @@ O GitHub Actions vai:
 ## Coleções PocketBase
 
 - `users`: Usuários (auth nativo)
-- `telegram_accounts`: phone, api_id, api_hash, is_authorized
-- `webhooks`: webhook_url, filter_tipo, account_id
+- `telegram_sessions`: phone, session_id, name (alias opcional, editável)
+  - `StringSession` (credencial) só em `/app/sessions/*.json` no container `telegram-api`.
+- `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
+  - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
 
 ---
 

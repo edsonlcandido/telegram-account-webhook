@@ -81,8 +81,11 @@ TG_API_HASH=abc123...
 ## Coleções PocketBase
 
 - `users`: Usuários (auth nativo)
-- `telegram_accounts`: phone, api_id, api_hash, is_authorized
-- `webhooks`: webhook_url, filter_tipo, account_id
+- `telegram_sessions`: phone, session_id, name (alias opcional, editável)
+  - Credencial `StringSession` **NÃO** fica aqui — só no `/app/sessions/*.json`.
+  - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container (single-app).
+- `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
+  - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
 
 ## API Backend
 

@@ -1088,21 +1088,17 @@ async def register_account_pb(
     """Registra/atualiza a conta no PB (collection `telegram_sessions`).
 
     A StringSession NÃO é enviada — ela fica só no arquivo em
-    `/app/sessions/*.json` (credencial). A collection no PB é pra
-    metadados (name, api_id, api_hash, flags) e pros relacionamentos com
-    `telegram_webhooks`.
+    `/app/sessions/*.json` (credencial). A collection no PB guarda só
+    metadados leves (phone, name) e a relação com `telegram_webhooks`.
+    Credenciais do app Telegram (api_id/api_hash) vivem nos env vars
+    do container e são sempre as mesmas (single-app).
     """
     payload: dict = {
         "session_id": session_id,
         "phone": phone,
-        "active": True,
     }
     if name:
         payload["name"] = name
-    if API_ID:
-        payload["api_id"] = API_ID
-    if API_HASH:
-        payload["api_hash"] = API_HASH
 
     try:
         # Se já existe record com esse session_id, atualiza (mantém id e created);
