@@ -162,8 +162,13 @@ Ou via MCP do Easypanel: `deployAppService` com `{projectName: "eh-tudo", servic
 
 ## Migrations PocketBase (PB 0.40+)
 
-Detalhes completos em `.agents/skills/pocketbase-gotchas.md` (seção
-"Migrations JS"). TL;DR:
+**Referência completa: `.agents/skills/pocketbase-migrations/SKILL.md`** —
+cobre em detalhe: regra "nunca editar, sempre criar nova", sintaxe de
+Field em PB 0.40+ (options diretas no field, não em `options: {}`),
+timestamps BRT-as-UTC, idempotência, procedimento de teste local com
+`pb_data` + `sqlite3`, e tabela de erros comuns.
+
+TL;DR (sempre ler a skill antes de mexer em `pb_migrations/`):
 
 - **NUNCA editar uma migration depois de commitada.** O PB registra as
   migrations em `pb_data/_migrations` e não reaplica se você mudar o

@@ -209,6 +209,12 @@ cp -r apps/web/dist/* pb_public/app/
 
 ## Migrations JS (PB 0.40+)
 
+> **Skill dedicada:** `.agents/skills/pocketbase-migrations/SKILL.md` —
+> cobre em profundidade as 2 regras, sintaxe de Field, timestamps
+> BRT-as-UTC, procedimento de teste local e tabela de erros. Esta
+> seção é um resumo / histórico do que foi aprendido; consulte a skill
+> dedicada antes de mexer em `pb_migrations/`.
+
 ### Regra de ouro: NUNCA editar uma migration depois de commitada
 
 O PB registra as migrations aplicadas em `pb_data/_migrations` (tabela SQLite).

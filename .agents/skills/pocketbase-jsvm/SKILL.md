@@ -257,18 +257,19 @@ or any `/api/*` endpoint to verify the hook is registered and the proxy works.
 
 ## Migrations (this project)
 
-This project uses **JS migrations** under `pocketbase/pb_migrations/`. The
-**two main rules** below are non-obvious and have caused deploy rollbacks
-in this project — see `.agents/skills/pocketbase-gotchas.md` for the full
-write-up (syntax of `Field`, `Collection`, `options` vs flat, how to test
-locally with `pocketbase.exe serve` + `sqlite3 pb_data/data.db`).
+This project uses **JS migrations** under `pocketbase/pb_migrations/`.
+Full guide (schema syntax, idempotency, local testing with `pb_data` +
+`sqlite3`, error table) lives in
+**`.agents/skills/pocketbase-migrations/SKILL.md`** — read that before
+touching any migration.
 
-1. **Never edit a migration after commit.** The PB tracks applied
-   migrations in `pb_data/_migrations` and doesn't re-run modified ones.
-   If a migration left partial state, write a new one with a higher
-   timestamp and make it idempotent (check before adding fields /
-   creating collections).
+Two rules that have caused real deploy rollbacks in this repo:
+
+1. **Never edit a migration after commit.** PB tracks applied migrations
+   in `pb_data/_migrations` and doesn't re-run modified ones. If a
+   migration left partial state, write a new one with a higher timestamp
+   and make it idempotent.
 
 2. **Filename timestamp = Unix epoch, in BRT-as-UTC.** PowerShell:
-   `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 10800`. Must be
-   greater than the highest existing file in `pb_migrations/`.
+   `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 10800`. Must be greater
+   than the highest existing file in `pb_migrations/`.
