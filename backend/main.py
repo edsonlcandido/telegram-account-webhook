@@ -164,20 +164,62 @@ def delete_session_file(session_id: str):
 # explicitamente o cache pra reduzir a janela.
 _WEBHOOK_CACHE: Dict[str, tuple[float, list[dict]]] = {}
 _WEBHOOK_CACHE_TTL_SEC = 30.0
+# Cache de "qual user PB é dono de qual sessão Telegram".
+# Populado no register_account_pb (signup). Permite ao handler do Telethon
+# (que roda em background, sem request HTTP) saber qual token usar pra
+# falar com o PB em nome do user.
+_SESSION_OWNER: Dict[str, str] = {}  # session_id -> pb_user_id
+# Cache de tokens JWT ativos por user PB.
+# Populado em verify_pb_auth toda vez que o user chama qualquer endpoint.
+# O _get_active_webhooks consulta esse cache pra falar com o PB.
+# Tokens são renovados (refreshed) automaticamente pelo verify_pb_auth.
+_USER_TOKENS: Dict[str, str] = {}  # pb_user_id -> user_token
 # Flag pra logar o warning de service token ausente SÓ UMA VEZ no startup,
 # não toda mensagem (evita flood no log).
 _service_token_warned: bool = False
 
 
 def _service_pb_headers() -> dict:
-    """Header pro PB com o service token. Vazio se não configurado."""
+    """Header pro PB com o service token global (env var) OU cache por user.
+
+    Ordem de preferência:
+    1. POCKETBASE_SERVICE_TOKEN (env var) — se configurado, sempre usa.
+    2. Token do user "dono" da sessão (cache _USER_TOKENS[_SESSION_OWNER[session_id]]).
+       Atualizado automaticamente em verify_pb_auth.
+
+    Se nenhum dos dois estiver disponível, retorna {} (PB rejeitará com 401).
+    """
     if POCKETBASE_SERVICE_TOKEN:
         return {"Authorization": POCKETBASE_SERVICE_TOKEN}
     return {}
 
 
+def _session_token_headers(session_id: str) -> dict:
+    """Header pro PB específico da sessão Telegram — usa o token do user dono.
+
+    Sem isso, o handler do Telethon (background, sem request) não tem
+    accesso ao token do user. O token é cacheado em _USER_TOKENS toda
+    vez que o user chama qualquer endpoint, então fica fresco (5 min
+    de TTL no verify_pb_auth).
+    """
+    owner_id = _SESSION_OWNER.get(session_id)
+    if not owner_id:
+        return {}
+    user_token = _USER_TOKENS.get(owner_id)
+    if not user_token:
+        return {}
+    return {"Authorization": user_token}
+
+
 async def _get_active_webhooks(session_id: str) -> list[dict]:
-    """Busca webhooks ativos (enabled=true) da sessão, com cache 30s."""
+    """Busca webhooks ativos (enabled=true) da sessão, com cache 30s.
+
+    Ordem de preferência do token PB:
+    1. POCKETBASE_SERVICE_TOKEN (env var, global)
+    2. Token do user dono da sessão (cache _USER_TOKENS, populado em
+       verify_pb_auth). OBRIGATÓRIO se não tiver env var — sem isso o
+       handler do Telethon não tem como falar com o PB.
+    """
     import time as _time
     global _service_token_warned
     now = _time.time()
@@ -185,12 +227,18 @@ async def _get_active_webhooks(session_id: str) -> list[dict]:
     if cached and (now - cached[0]) < _WEBHOOK_CACHE_TTL_SEC:
         return cached[1]
 
+    # 1) Tenta o env var primeiro
     headers = _service_pb_headers()
+    # 2) Se não tiver, usa o token do user dono da sessão
+    if not headers:
+        headers = _session_token_headers(session_id)
+
     if not headers and not _service_token_warned:
         logger.warning(
-            "POCKETBASE_SERVICE_TOKEN não configurado — webhook forwarding "
-            "vai falhar com 401. Crie um user de service no PB e adicione "
-            "o JWT em POCKETBASE_SERVICE_TOKEN."
+            "Sem token PB disponível pro handler (nem POCKETBASE_SERVICE_TOKEN "
+            "env var, nem user dono da sessão). Webhook forwarding vai falhar "
+            "com 401 — popule POCKETBASE_SERVICE_TOKEN OU use a UI com a "
+            "sessão logada pra popular _USER_TOKENS."
         )
         _service_token_warned = True
 
@@ -621,26 +669,34 @@ async def verify_pb_auth(authorization: str | None = Header(default=None)) -> di
 
     cached = _auth_cache.get(token)
     if cached and cached[1] > now:
-        return cached[0]
+        user = cached[0]
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # PB 0.40+ mudou o endpoint de GET pra POST. GET agora retorna 404.
+                resp = await client.post(
+                    f"{POCKETBASE_URL}/api/collections/users/auth-refresh",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if resp.status_code != 200:
+                _auth_cache.pop(token, None)
+                raise HTTPException(401, "Token inválido ou expirado")
+            user = resp.json()
+            _auth_cache[token] = (user, now + AUTH_CACHE_TTL)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Falha ao validar token PB: {e}")
+            raise HTTPException(503, "Serviço de autenticação indisponível")
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # PB 0.40+ mudou o endpoint de GET pra POST. GET agora retorna 404.
-            resp = await client.post(
-                f"{POCKETBASE_URL}/api/collections/users/auth-refresh",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        if resp.status_code != 200:
-            _auth_cache.pop(token, None)
-            raise HTTPException(401, "Token inválido ou expirado")
-        user = resp.json()
-        _auth_cache[token] = (user, now + AUTH_CACHE_TTL)
-        return user
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Falha ao validar token PB: {e}")
-        raise HTTPException(503, "Serviço de autenticação indisponível")
+    # Popula _USER_TOKENS (cache de "qual JWT usar pra falar com o PB
+    # em nome deste user"). Usado pelo _get_active_webhooks em background
+    # tasks (handler do Telethon) que não têm request HTTP no contexto.
+    user_id = user.get("id", "")
+    if user_id and token:
+        _USER_TOKENS[user_id] = token
+
+    return user
 
 
 async def get_user_token(authorization: str | None = Header(default=None)) -> str:
@@ -1182,6 +1238,9 @@ async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth))
     # Invalida cache de webhooks dessa sessão
     _invalidate_webhook_cache(session_id)
 
+    # Remove associação session_id -> user_id
+    _SESSION_OWNER.pop(session_id, None)
+
     return {"success": True}
 
 
@@ -1245,6 +1304,18 @@ async def register_account_pb(
                 )
         if 200 <= resp.status_code < 300:
             logger.info(f"📝 Conta registrada no PocketBase: {phone}")
+            # Cacheia a associação session_id -> pb_user_id. O handler do
+            # Telethon (que roda em background) consulta _SESSION_OWNER
+            # pra saber qual token do PB usar pro _get_active_webhooks.
+            if user_token and user_token in _USER_TOKENS:
+                # Já temos o user_id cacheado pelo verify_pb_auth
+                for uid, tok in _USER_TOKENS.items():
+                    if tok == user_token:
+                        _SESSION_OWNER[session_id] = uid
+                        logger.info(
+                            f"🔗 Sessão {session_id} associada ao user PB {uid}"
+                        )
+                        break
         else:
             logger.error(
                 f"PB recusou registro de {phone}: {resp.status_code} {resp.text}"
