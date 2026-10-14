@@ -73,14 +73,6 @@ onRecordAfterCreateSuccess((e) => {
   // Fazemos o trabalho de distribuir pros webhooks e atualizar o record
   // com o resultado. Se o save inicial falhar, esse hook não é chamado.
 
-  // DEBUG: marca no campo text se o hook rodou
-  try {
-    e.record.set("text", "[HOOK_FOI_AQUI] " + e.record.getString("text"))
-    $app.dao().saveRecord(e.record)
-  } catch (err) {
-    console.log("[hook] saveRecord falhou:", err)
-  }
-
   const msg = e.record
   const sessionRel = msg.getString("session") // PB id do record da sessão
 
@@ -134,20 +126,31 @@ onRecordAfterCreateSuccess((e) => {
     }
   }
 
-  // 4) Atualiza o record com o resultado (bypass das rules porque
-  //    updateRule=null, mas o hook roda como superuser)
-  try {
-    msg.set("delivered_count", delivered)
-    if (firstError) msg.set("delivery_error", firstError)
-    $app.dao().saveRecord(msg)
-  } catch (err) {
-    // Não é fatal — o webhook já foi entregue (ou tentado). Loga.
-    console.log("telegram_messages hook: não consegui atualizar msg", msg.id, err)
+  // 4) Atualizar delivered_count/delivery_error no record.
+  // NOTA: o $app.dao().saveRecord aqui roda DENTRO da transação do
+  // AfterSuccess hook, então é descartado no commit (o INSERT inicial
+  // é o que persiste). Por isso só logamos o resultado em vez de
+  // persistir. O webhook forwarding funciona mesmo sem essa métrica.
+  if (firstError) {
+    console.log(
+      "telegram_messages hook: msg=" + msg.id +
+      " session=" + sessionRel +
+      " webhooks=" + webhooks.length +
+      " delivered=" + delivered +
+      " firstError=" + firstError,
+    )
+  } else {
+    console.log(
+      "telegram_messages hook: msg=" + msg.id +
+      " session=" + sessionRel +
+      " webhooks=" + webhooks.length +
+      " delivered=" + delivered,
+    )
   }
 
   console.log(
     "telegram_messages hook: msg=" + msg.id +
-    " sessao=" + sessionRel +
+    " session=" + sessionRel +
     " webhooks=" + webhooks.length +
     " delivered=" + delivered,
   )
