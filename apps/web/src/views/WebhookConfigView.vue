@@ -13,6 +13,45 @@ const props = defineProps<{ sessionId: string }>()
 const webhookUrl = ref('')
 const loading = ref(false)
 const testing = ref(false)
+
+// Payload completo (igual ao do /docs, seção 1) pra mostrar pro usuário o que
+// vai chegar no endpoint dele. Mantido aqui em vez de importado do /docs pra
+// essa tela ser auto-contida.
+const INCOMING_PAYLOAD = JSON.stringify(
+  {
+    session_id: 'account_5511999998888',
+    message_id: 1234,
+    chat_id: 5511988887777,
+    chat_type: 'private',
+    chat_title: 'Maria Silva',
+    outgoing: false,
+    text: 'oi, tudo bem?',
+    sender_id: 5511988887777,
+    sender_name: 'Maria Silva',
+    sender_username: 'maria',
+    is_reply: false,
+    reply_to_message_id: null,
+    has_media: false,
+    media_type: null,
+    media_mime_type: null,
+    timestamp: '2026-10-13T20:51:03.123456',
+  },
+  null,
+  2,
+)
+
+const copiedPayload = ref(false)
+async function copyPayload() {
+  try {
+    await navigator.clipboard.writeText(INCOMING_PAYLOAD)
+    copiedPayload.value = true
+    setTimeout(() => {
+      copiedPayload.value = false
+    }, 1500)
+  } catch {
+    // fallback silencioso
+  }
+}
 const testResult = ref<{ success: boolean; status: number } | null>(null)
 const saved = ref(false)
 const error = ref('')
@@ -204,20 +243,23 @@ const goBack = () => {
         <div class="mt-8 p-4 bg-blue-50 rounded-xl border border-blue-200">
           <h4 class="font-semibold text-blue-900 mb-2">O que é um Webhook?</h4>
           <p class="text-sm text-blue-700">
-            Um webhook é uma URL que recebe notificações quando chega uma mensagem na sua conta Telegram. 
+            Um webhook é uma URL que recebe notificações quando chega uma mensagem na sua conta Telegram.
             Configure o endpoint do seu sistema para receber os dados em tempo real.
           </p>
-          <div class="mt-4 bg-white rounded-lg p-4 font-mono text-xs">
-            <p class="text-gray-600">Exemplo do payload recebido:</p>
-            <pre class="mt-2 text-gray-800">{{ JSON.stringify({
-              "session_id": "account_...",
-              "chat_id": 123456789,
-              "message_id": 1,
-              "text": "Olá!",
-              "sender_id": 987654321,
-              "sender_name": "João Silva",
-              "timestamp": "2024-01-01T00:00:00Z"
-            }, null, 2) }}</pre>
+          <div class="mt-4 bg-white rounded-lg p-4">
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-gray-600 text-xs">Exemplo do payload recebido (POST JSON):</p>
+              <button
+                @click="copyPayload"
+                class="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 font-medium"
+              >
+                {{ copiedPayload ? '✓ Copiado' : 'Copiar' }}
+              </button>
+            </div>
+            <pre class="font-mono text-xs text-gray-800 overflow-x-auto leading-relaxed"><code>{{ INCOMING_PAYLOAD }}</code></pre>
+            <p class="text-xs text-gray-500 mt-2">
+              <a href="/app/docs" class="text-blue-600 hover:underline">Ver documentação completa →</a>
+            </p>
           </div>
         </div>
       </div>
