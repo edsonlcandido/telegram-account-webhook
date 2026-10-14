@@ -26,6 +26,7 @@ build
 # PocketBase
 pocketbase/pocketbase
 pocketbase/pocketbase.exe
+pocketbase/pocketbase.zip
 pocketbase/pb_data/*
 !pocketbase/pb_data/.gitkeep
 !pocketbase/pb_data/types.d.ts
