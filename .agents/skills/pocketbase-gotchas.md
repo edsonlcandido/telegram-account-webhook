@@ -204,3 +204,122 @@ cp -r apps/web/dist/* pb_public/app/
 # Rodar
 ./pocketbase serve
 ```
+
+---
+
+## Migrations JS (PB 0.40+)
+
+### Regra de ouro: NUNCA editar uma migration depois de commitada
+
+O PB registra as migrations aplicadas em `pb_data/_migrations` (tabela SQLite).
+Se você edita o conteúdo de uma migration existente, o PB **não reaplica** —
+o registro antigo continua lá e o seu código novo nunca roda. Pior: se a
+migration antiga falhou e o estado ficou parcial, a única forma de consertar
+é criar uma **nova** migration defensiva que cobre o caso.
+
+**Errado** (pior que parece — vira código morto):
+```js
+// 1791929716_*.js (errado)
+// Editar o conteúdo deste arquivo não muda nada em produção — o PB já
+// marcou como "tentada" e não vai reaplicar.
+```
+
+**Certo** (criar nova migration com timestamp maior):
+```js
+// 1791930807_fix_*.js  ← novo arquivo, timestamp > anterior
+migrate((app) => {
+  // Idempotente: checa o estado antes de mexer.
+  if (!collection.fields.getByName("name")) {
+    collection.fields.add(new Field({...}))
+    app.save(collection)
+  }
+})
+```
+
+### Timestamps de migration
+
+Use timestamp Linux **com timezone -3 (BRT-as-UTC)**. Exemplo: agora é
+`2026-10-13 22:36 BRT` → epoch UTC = `1791941800` → timestamp BRT-as-UTC
+= `1791941800 - 3*3600` = `1791931000`. Em PowerShell:
+
+```powershell
+[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 3*3600
+```
+
+Mais importante que o cálculo exato: o timestamp da migration tem que ser
+**maior** que o da última. Sempre verifique o maior existente em
+`pocketbase/pb_migrations/` antes de criar.
+
+### Sintaxe de Field em PB 0.40+
+
+Em PB 0.40+, as opções de field vão **direto no field** (não dentro de
+`options: {}` como em PB <0.22). Errado vs certo:
+
+```js
+// ❌ ERRADO (PB 0.22): opções aninhadas em `options`
+{ name: "filter_direction", type: "select", required: false,
+  options: { maxSelect: 1, values: ["all", "incoming"] } }
+// Erro em prod: "(values: cannot be blank.)"
+
+// ✅ CERTO (PB 0.40+): opções diretas no field
+{ name: "filter_direction", type: "select", required: false,
+  values: ["all", "incoming", "outgoing"], maxSelect: 1 }
+```
+
+Por tipo:
+
+| Tipo | Campos chave (no field, não em `options`) |
+|---|---|
+| `text` | `max`, `min`, `pattern`, `required` |
+| `url` | `exceptDomains`, `onlyDomains`, `required` |
+| `bool` | `required` |
+| `select` | `values: string[]`, `maxSelect`, `required` |
+| `relation` | `collectionId`, `cascadeDelete`, `minSelect`, `maxSelect`, `required` |
+
+### Adicionar field em collection existente
+
+**Errado** (objeto literal): `collection.fields.add({name, type, max})`
+falha com `"could not convert [object Object] to core.Field"`.
+
+**Certo** (classe `Field`):
+```js
+const col = app.findCollectionByNameOrId("telegram_sessions")
+if (!col.fields.getByName("name")) {
+  col.fields.add(new Field({ name: "name", type: "text", max: 60, required: false }))
+  app.save(col)
+}
+```
+
+Shorthand válido: `col.fields.add("name")` cria um `TextField` básico
+(precisa editar as props depois se quiser `max`/`min`).
+
+### Testar migrations ANTES de commit/deploy
+
+O usuário fica com 502 Gateway no webapp se a migration quebrar em prod.
+**Sempre** rodar localmente primeiro:
+
+```bash
+# 1) Baixar o binário (já tem script: scripts/pocketbase.js)
+cd pocketbase
+node ../scripts/pocketbase.js    # baixa + extrai via PowerShell Expand-Archive
+
+# 2) Resetar pb_data pra estado limpo
+mavis-trash pb_data
+# (ou `rm -- pocketbase/pb_data` se o runtime permitir)
+
+# 3) Rodar PB em foreground ou background (ele aplica as migrations no startup)
+./pocketbase.exe serve --http=127.0.0.1:8090
+
+# 4) Inspecionar o SQLite gerado em pb_data/data.db
+sqlite3 pb_data/data.db "SELECT file FROM _migrations ORDER BY file"
+sqlite3 pb_data/data.db "PRAGMA table_info(telegram_webhooks)"
+
+# 5) Se algum erro no startup ("failed to apply migration..."), corrigir
+#    e voltar pro passo 2. NÃO comitar até subir limpo.
+```
+
+Logs de erro comuns em migrations quebradas:
+- `could not convert [object Object] to core.Field` → faltou `new Field({...})`
+- `(collectionId: cannot be blank.)` → `collectionId` deve ser direto, não em `options`
+- `(values: cannot be blank.)` → mesmo problema pra select
+- `(min: cannot be blank.)` em migration que antes funcionava → checar se a migration anterior realmente rodou (pode estar rodando 2x)

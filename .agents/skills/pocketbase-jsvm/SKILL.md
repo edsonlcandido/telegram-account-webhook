@@ -254,3 +254,21 @@ or any `/api/*` endpoint to verify the hook is registered and the proxy works.
    - `BadRequestError` thrown but PB still returns 500 → check the message
      isn't an object; PB stringifies `message` and serializes the second arg
      as `data` in the JSON response.
+
+## Migrations (this project)
+
+This project uses **JS migrations** under `pocketbase/pb_migrations/`. The
+**two main rules** below are non-obvious and have caused deploy rollbacks
+in this project — see `.agents/skills/pocketbase-gotchas.md` for the full
+write-up (syntax of `Field`, `Collection`, `options` vs flat, how to test
+locally with `pocketbase.exe serve` + `sqlite3 pb_data/data.db`).
+
+1. **Never edit a migration after commit.** The PB tracks applied
+   migrations in `pb_data/_migrations` and doesn't re-run modified ones.
+   If a migration left partial state, write a new one with a higher
+   timestamp and make it idempotent (check before adding fields /
+   creating collections).
+
+2. **Filename timestamp = Unix epoch, in BRT-as-UTC.** PowerShell:
+   `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 10800`. Must be
+   greater than the highest existing file in `pb_migrations/`.

@@ -160,3 +160,33 @@ Ou via MCP do Easypanel: `deployAppService` com `{projectName: "eh-tudo", servic
 - **TS6133 "declared but never read"** se uma constante foi usada só em comentário ou removida do template — deletar a declaração (vue-tsc é estrito).
 - **Bundle JS tem cache agressivo** no navegador do usuário final: depois de deploy, pode aparecer a versão antiga mesmo com hash novo. Sempre validar via `curl` no asset, não só no HTML.
 
+## Migrations PocketBase (PB 0.40+)
+
+Detalhes completos em `.agents/skills/pocketbase-gotchas.md` (seção
+"Migrations JS"). TL;DR:
+
+- **NUNCA editar uma migration depois de commitada.** O PB registra as
+  migrations em `pb_data/_migrations` e não reaplica se você mudar o
+  conteúdo. Se uma migration falhou em prod e ficou estado parcial, crie
+  uma **nova** migration com timestamp maior, defensiva (idempotente).
+- **Timestamps de migration** usam epoch Linux com timezone -3 (BRT-as-UTC).
+  PowerShell: `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 3*3600`.
+  Sempre maior que o último em `pocketbase/pb_migrations/`.
+- **Sintaxe de Field em PB 0.40+** — opções vão **direto no field**
+  (`values`, `collectionId`, `cascadeDelete`, `minSelect`, `maxSelect`),
+  NÃO dentro de `options: {}`. Errado = `could not convert [object Object] to core.Field`
+  ou `(values/collectionId: cannot be blank.)`.
+- **Adicionar field em collection existente** precisa da classe wrapper:
+  `col.fields.add(new Field({...}))`. Objeto literal falha.
+- **SEMPRE testar migrations localmente** antes de commit/deploy:
+
+  ```bash
+  cd pocketbase
+  mavis-trash pb_data    # resetar estado local
+  node ../scripts/pocketbase.js   # baixa e roda PB
+  # verificar `pb_data/_migrations` no SQLite (ou `pocketbase admin`)
+  ```
+
+  Se o startup do PB imprimir `failed to apply migration ...`, **não commit**.
+  Corrigir a migration e voltar pro passo 1.
+
