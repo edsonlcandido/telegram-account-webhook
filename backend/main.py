@@ -827,7 +827,11 @@ async def list_session_webhooks(
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
-                params={"filter": f'session="{pb_id}"', "perPage": 500, "sort": "created"},
+                # Sem `sort=created`: PB 0.40+ rejeita sort nos system fields
+                # `created`/`updated` com 400. Como só listamos webhooks de UMA
+                # sessão, a ordem de criação não é tão importante — o `id`
+                # (gerado pelo PB em ordem cronológica) é suficiente.
+                params={"filter": f'session="{pb_id}"', "perPage": 500},
                 headers=pb_headers(user_token),
             )
         items = r.json().get("items", [])
