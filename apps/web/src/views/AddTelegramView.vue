@@ -11,6 +11,7 @@ const step = ref<'phone' | 'code' | 'loading' | 'success' | 'error'>('phone')
 // Dados
 const phone = ref('')
 const code = ref('')
+const name = ref('')  // alias amigável (opcional)
 const phoneCodeHash = ref('')
 const sessionId = ref('')
 const errorMessage = ref('')
@@ -40,6 +41,10 @@ const isValidPhone = computed(() => {
 
 const isValidCode = computed(() => {
   return code.value.replace(/\D/g, '').length >= 4
+})
+
+const isValidName = computed(() => {
+  return name.value.length <= 60
 })
 
 const handlePhoneInput = (e: Event) => {
@@ -201,6 +206,26 @@ const goBack = () => {
             />
             <p v-if="phone && !isValidPhone" class="mt-2 text-sm text-red-500">
               Use o formato internacional com + (ex.: +5511981184099)
+            </p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Apelido da conta <span class="text-gray-400 font-normal">(opcional)</span>
+            </label>
+            <input
+              v-model="name"
+              type="text"
+              maxlength="60"
+              placeholder="ex.: Suporte, Vendas, Pessoal"
+              class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+              :class="{ 'border-red-300': !isValidName }"
+            />
+            <p v-if="!isValidName" class="mt-2 text-sm text-red-500">
+              Máximo 60 caracteres.
+            </p>
+            <p v-else class="mt-2 text-sm text-gray-500">
+              Ajuda a distinguir contas quando você tem mais de uma. Se vazio, o número é usado.
             </p>
           </div>
 

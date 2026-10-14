@@ -55,20 +55,39 @@ class VerifyCodeRequest(BaseModel):
     phone_number: str
     code: str
     password: Optional[str] = None
+    name: Optional[str] = None  # alias amigável pro usuário
 
 
-class SetWebhookRequest(BaseModel):
-    session_id: str
-    webhook_url: str
+class CreateWebhookRequest(BaseModel):
+    name: Optional[str] = None
+    url: str
+    enabled: bool = True
+    filter_direction: str = "all"  # all | incoming | outgoing
+    filter_chat_type: str = "all"  # all | private | group | supergroup | channel
+    filter_text_match_operator: str = "none"  # none | equals | contains
+    filter_text_match_value: Optional[str] = None
+
+
+class UpdateWebhookRequest(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    enabled: Optional[bool] = None
+    filter_direction: Optional[str] = None
+    filter_chat_type: Optional[str] = None
+    filter_text_match_operator: Optional[str] = None
+    filter_text_match_value: Optional[str] = None
 
 
 class ToggleWebhookRequest(BaseModel):
-    session_id: str
     enabled: bool
 
 
 class TestWebhookRequest(BaseModel):
-    webhook_url: str
+    pass  # sem body — a URL vem do webhook_id na rota
+
+
+class UpdateSessionRequest(BaseModel):
+    name: Optional[str] = None  # alias
 
 
 class SendMessageRequest(BaseModel):
@@ -76,10 +95,6 @@ class SendMessageRequest(BaseModel):
     chat_id: int | str  # aceita ID numérico (int) ou @username (str)
     text: str
     reply_to_message_id: Optional[int] = None
-
-
-class DeleteSessionRequest(BaseModel):
-    session_id: str
 
 
 # =============================================================================
@@ -91,15 +106,17 @@ def get_session_file(session_id: str) -> Path:
     return SESSIONS_DIR / f"{session_id}.session"
 
 
-def save_session(session_id: str, session_string: str, phone: str, webhook_url: str = None, webhook_enabled: bool = True):
-    """Salva sessão no sistema de arquivos"""
+def save_session(session_id: str, session_string: str, phone: str):
+    """Salva apenas a credencial no sistema de arquivos.
+
+    Metadados editáveis (name, webhooks) ficam no PocketBase como source
+    of truth — o arquivo é só pra carregar a sessão Telethon de volta no boot.
+    """
     session_file = get_session_file(session_id)
     data = {
         "session_string": session_string,
         "phone": phone,
-        "webhook_url": webhook_url,
-        "webhook_enabled": webhook_enabled,
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now().isoformat(),
     }
     session_file.write_text(json.dumps(data))
     logger.info(f"💾 Sessão salva: {session_id}")
@@ -130,63 +147,144 @@ def delete_session_file(session_id: str):
 
 
 # =============================================================================
-# Event Handler - Forward para Webhook
+# Event Handler - Forward para Webhook (multi-webhook com filtros)
 # =============================================================================
 
+# Cache de webhooks ativos por sessão: session_id -> (timestamp, list[dict]).
+# Cada item é o record completo do PB. TTL 30s — webhooks novos/editados
+# aparecem no máximo 30s depois; endpoints que mutam webhooks invalidam
+# explicitamente o cache pra reduzir a janela.
+_WEBHOOK_CACHE: Dict[str, tuple[float, list[dict]]] = {}
+_WEBHOOK_CACHE_TTL_SEC = 30.0
+
+
+async def _get_active_webhooks(session_id: str) -> list[dict]:
+    """Busca webhooks ativos (enabled=true) da sessão, com cache 30s."""
+    import time as _time
+    now = _time.time()
+    cached = _WEBHOOK_CACHE.get(session_id)
+    if cached and (now - cached[0]) < _WEBHOOK_CACHE_TTL_SEC:
+        return cached[1]
+
+    # 1) Acha o record da sessão no PB
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        sess_resp = await client.get(
+            f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+            params={"filter": f'session_id="{session_id}"', "perPage": 1},
+        )
+        sess_items = sess_resp.json().get("items", [])
+        if not sess_items:
+            _WEBHOOK_CACHE[session_id] = (now, [])
+            return []
+        pb_session_id = sess_items[0]["id"]
+
+        # 2) Lista os webhooks ativos
+        wh_resp = await client.get(
+            f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+            params={"filter": f'session="{pb_session_id}" && enabled=true', "perPage": 500},
+        )
+        webhooks = wh_resp.json().get("items", [])
+
+    _WEBHOOK_CACHE[session_id] = (now, webhooks)
+    return webhooks
+
+
+def _invalidate_webhook_cache(session_id: str | None = None) -> None:
+    """Invalida o cache. Se session_id=None, invalida tudo (usar com cuidado)."""
+    if session_id is None:
+        _WEBHOOK_CACHE.clear()
+    else:
+        _WEBHOOK_CACHE.pop(session_id, None)
+
+
+def _matches_filters(event, webhook: dict) -> bool:
+    """Avalia os 3 filtros do webhook contra o evento do Telethon."""
+    # Filtro de direção
+    direction = webhook.get("filter_direction", "all")
+    if direction == "incoming" and event.outgoing:
+        return False
+    if direction == "outgoing" and not event.outgoing:
+        return False
+
+    # Filtro de tipo de chat
+    chat_type = webhook.get("filter_chat_type", "all")
+    if chat_type != "all" and chat_type != _chat_type(event):
+        return False
+
+    # Filtro de texto
+    op = webhook.get("filter_text_match_operator", "none")
+    value = (webhook.get("filter_text_match_value") or "").strip()
+    if op == "none" or not value:
+        return True
+    text = (event.text or "").strip()
+    if op == "equals":
+        return text == value
+    if op == "contains":
+        return value in text
+    return True
+
+
 async def handle_new_message(event, session_id: str):
-    """Handler que dispara quando chega nova mensagem"""
+    """Handler que dispara quando chega nova mensagem nova.
+
+    Pra cada webhook ativo da sessão (PB + cache), avalia os filtros
+    configurados e faz POST na URL se passar. Best-effort: status != 200
+    ou timeout são logados, sem retry.
+    """
     try:
         logger.info(
             f"📩 Nova mensagem recebida: session={session_id} "
             f"chat={event.chat_id} msg_id={event.id}"
         )
 
-        # Busca webhook da sessão
-        webhook_url = None
-        webhook_enabled = True
-        if session_id in active_clients:
-            session_file = get_session_file(session_id)
-            if session_file.exists():
-                data = json.loads(session_file.read_text())
-                webhook_url = data.get("webhook_url")
-                webhook_enabled = data.get("webhook_enabled", True)
-                logger.debug(
-                    f"webhook_url={webhook_url} enabled={webhook_enabled} "
-                    f"lidos do arquivo"
-                )
-            else:
-                logger.warning(
-                    f"⚠️ Sessão {session_id} em active_clients mas arquivo "
-                    f"{session_file} sumiu — webhook NÃO será chamado"
-                )
-        else:
+        if session_id not in active_clients:
             logger.warning(
                 f"⚠️ Mensagem de sessão {session_id} NÃO está em active_clients "
                 f"— handler foi chamado mas cliente foi desconectado?"
             )
+            return
 
-        if not webhook_url:
-            logger.warning(
-                f"⏭️ Sessão {session_id} sem webhook configurado, ignorando"
+        webhooks = await _get_active_webhooks(session_id)
+        if not webhooks:
+            logger.debug(
+                f"⏭️ Sessão {session_id} sem webhooks ativos, ignorando"
             )
             return
 
-        if not webhook_enabled:
+        # Filtra pelos filtros configurados em cada webhook
+        matched = [wh for wh in webhooks if _matches_filters(event, wh)]
+        if not matched:
             logger.debug(
-                f"⏸ Sessão {session_id} com webhook pausado, ignorando "
-                f"msg #{event.id}"
+                f"⏭️ Msg #{event.id} não casou com nenhum webhook ativo "
+                f"de {session_id} (filtros)"
             )
             return
 
         message_data = _build_message_payload(event, session_id)
 
-        # Forward para webhook
+        # Forward pra cada webhook que passou nos filtros
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(webhook_url, json=message_data)
-            if response.status_code == 200:
-                logger.info(f"📤 Msg #{event.id} de {message_data.get('sender_name', '?')} → webhook OK")
-            else:
-                logger.warning(f"📤 Msg #{event.id} → webhook retornou {response.status_code}")
+            for wh in matched:
+                url = wh.get("url")
+                wh_id = wh.get("id", "?")
+                try:
+                    response = await client.post(url, json=message_data)
+                    if response.status_code == 200:
+                        logger.info(
+                            f"📤 Msg #{event.id} de "
+                            f"{message_data.get('sender_name', '?')} → "
+                            f"webhook {wh_id} OK"
+                        )
+                    else:
+                        logger.warning(
+                            f"📤 Msg #{event.id} → webhook {wh_id} "
+                            f"retornou {response.status_code}"
+                        )
+                except Exception as send_err:
+                    logger.warning(
+                        f"📤 Msg #{event.id} → webhook {wh_id} falhou: "
+                        f"{send_err}"
+                    )
 
     except Exception as e:
         logger.error(f"Erro ao processar mensagem: {e}")
@@ -609,7 +707,7 @@ async def verify_code(
         session_string = client.session.save()
         final_session_id = f"account_{request.phone_number.replace('+', '')}"
 
-        # Persiste em arquivo
+        # Persiste em arquivo (só credencial — name vai pro PB)
         save_session(final_session_id, session_string, request.phone_number)
 
         # Move cliente para sessão final
@@ -622,8 +720,13 @@ async def verify_code(
         # disco no boot via initialize_sessions → start_client).
         register_message_handler(client, final_session_id)
 
-        # Registra no PocketBase em background
-        background_tasks.add_task(register_account_pb, final_session_id, request.phone_number)
+        # Registra no PocketBase em background (inclui o alias se o user forneceu)
+        background_tasks.add_task(
+            register_account_pb,
+            final_session_id,
+            request.phone_number,
+            request.name,
+        )
 
         return {
             "success": True,
@@ -636,85 +739,270 @@ async def verify_code(
 
 
 # -----------------------------------------------------------------------------
-# 3. Configurar webhook para sessão
+# 3. Webhooks (multi-webhook por sessão, com filtros)
 # -----------------------------------------------------------------------------
-@app.post("/api/set-webhook")
-async def set_webhook(
-    request: SetWebhookRequest,
-    background_tasks: BackgroundTasks,
+
+async def _resolve_pb_session_id(session_id: str) -> str | None:
+    """Resolve o `session_id` (string única) pro `id` do PB (record id)."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={"filter": f'session_id="{session_id}"', "perPage": 1},
+            )
+        items = r.json().get("items", [])
+        return items[0]["id"] if items else None
+    except Exception as e:
+        logger.error(f"Erro resolvendo PB session: {e}")
+        return None
+
+
+async def _resolve_session_id_from_pb(pb_id: str) -> str | None:
+    """Resolve o `id` do PB pra `session_id` (string)."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
+            )
+        if r.status_code == 200:
+            return r.json().get("session_id")
+    except Exception as e:
+        logger.error(f"Erro resolvendo session_id: {e}")
+    return None
+
+
+# 3a. Listar webhooks de uma sessão
+@app.get("/api/sessions/{session_id}/webhooks")
+async def list_session_webhooks(
+    session_id: str,
     _user: dict = Depends(verify_pb_auth),
 ):
-    """
-    Configura URL do webhook para uma sessão.
-    O arquivo de sessão é a source of truth; o PB é sincronizado em background
-    pra manter a collection `telegram_sessions` consistente (pra auditoria/UI).
-    """
-    session_id = request.session_id
-
-    # Valida sessão existe
-    if session_id not in active_clients:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada")
-
-    # Atualiza arquivo de sessão (source of truth)
-    session_file = get_session_file(session_id)
-    if session_file.exists():
-        data = json.loads(session_file.read_text())
-        data["webhook_url"] = request.webhook_url
-        # garante campo webhook_enabled (default True) se ainda não existe
-        data.setdefault("webhook_enabled", True)
-        session_file.write_text(json.dumps(data))
-    else:
-        # Cria arquivo se não existir
-        save_session(session_id, "", "", request.webhook_url, webhook_enabled=True)
-
-    # Sincroniza no PocketBase em background (não bloqueia a resposta)
-    background_tasks.add_task(sync_webhook_pb, session_id, request.webhook_url)
-
-    logger.info(f"🔗 Webhook configurado para {session_id}: {request.webhook_url}")
-
-    return {"success": True, "webhook_url": request.webhook_url}
+    pb_id = await _resolve_pb_session_id(session_id)
+    if not pb_id:
+        return {"webhooks": []}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+                params={"filter": f'session="{pb_id}"', "perPage": 500, "sort": "created"},
+            )
+        items = r.json().get("items", [])
+        for w in items:
+            w["session_id"] = session_id
+        return {"webhooks": items}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao listar webhooks: {e}")
 
 
-# -----------------------------------------------------------------------------
-# 3b. Pausar/retomar dispatch do webhook (sem mexer na URL)
-# -----------------------------------------------------------------------------
-@app.post("/api/toggle-webhook")
+# 3b. Criar webhook
+@app.post("/api/sessions/{session_id}/webhooks")
+async def create_webhook(
+    session_id: str,
+    request: CreateWebhookRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
+    pb_id = await _resolve_pb_session_id(session_id)
+    if not pb_id:
+        raise HTTPException(404, "Sessão não encontrada no PB")
+
+    # Default name = "Webhook 1", "Webhook 2"... baseado em quantos já existem
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            cnt_r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+                params={"filter": f'session="{pb_id}"', "perPage": 500, "fields": "id"},
+            )
+        existing_count = len(cnt_r.json().get("items", []))
+    except Exception:
+        existing_count = 0
+    name = request.name or f"Webhook {existing_count + 1}"
+
+    payload = {
+        "session": pb_id,
+        "name": name,
+        "url": request.url,
+        "enabled": request.enabled,
+        "filter_direction": request.filter_direction,
+        "filter_chat_type": request.filter_chat_type,
+        "filter_text_match_operator": request.filter_text_match_operator,
+        "filter_text_match_value": request.filter_text_match_value or "",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+                json=payload,
+            )
+        if r.status_code >= 300:
+            raise HTTPException(400, f"PB recusou: {r.text}")
+        _invalidate_webhook_cache(session_id)
+        result = r.json()
+        result["session_id"] = session_id
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao criar webhook: {e}")
+
+
+# 3c. Atualizar webhook parcial
+@app.patch("/api/webhooks/{webhook_id}")
+async def update_webhook(
+    webhook_id: str,
+    request: UpdateWebhookRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
+    payload = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not payload:
+        raise HTTPException(400, "Nada pra atualizar")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.patch(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                json=payload,
+            )
+        if r.status_code >= 300:
+            raise HTTPException(400, f"PB recusou: {r.text}")
+        result = r.json()
+        sid = await _resolve_session_id_from_pb(result.get("session", ""))
+        if sid:
+            _invalidate_webhook_cache(sid)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar webhook: {e}")
+
+
+# 3d. Remover webhook
+@app.delete("/api/webhooks/{webhook_id}")
+async def delete_webhook(
+    webhook_id: str,
+    _user: dict = Depends(verify_pb_auth),
+):
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r_get = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+            )
+            if r_get.status_code != 200:
+                raise HTTPException(404, "Webhook não encontrado")
+            wh = r_get.json()
+            sid = await _resolve_session_id_from_pb(wh.get("session", ""))
+
+            r = await client.delete(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+            )
+        if r.status_code >= 300:
+            raise HTTPException(400, f"PB recusou: {r.text}")
+        if sid:
+            _invalidate_webhook_cache(sid)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao remover webhook: {e}")
+
+
+# 3e. Pausar/retomar webhook
+@app.post("/api/webhooks/{webhook_id}/toggle")
 async def toggle_webhook(
+    webhook_id: str,
     request: ToggleWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
 ):
-    """
-    Liga/desliga o dispatch do webhook de uma sessão sem remover a URL
-    configurada. Útil pra silenciar notificações temporariamente.
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r_get = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+            )
+            if r_get.status_code != 200:
+                raise HTTPException(404, "Webhook não encontrado")
+            sid = await _resolve_session_id_from_pb(r_get.json().get("session", ""))
 
-    Quando `enabled=false`, mensagens continuam sendo recebidas pelo client
-    Telethon mas o handler NÃO chama o webhook.
-    """
-    session_id = request.session_id
+            r = await client.patch(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                json={"enabled": request.enabled},
+            )
+        if r.status_code >= 300:
+            raise HTTPException(400, f"PB recusou: {r.text}")
+        if sid:
+            _invalidate_webhook_cache(sid)
+        return r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao alternar webhook: {e}")
 
-    if session_id not in active_clients:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
-    session_file = get_session_file(session_id)
-    if not session_file.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Sessão sem arquivo de configuração",
-        )
+# 3f. Testar webhook (POST simplificado)
+@app.post("/api/webhooks/{webhook_id}/test")
+async def test_webhook_endpoint(
+    webhook_id: str,
+    _user: dict = Depends(verify_pb_auth),
+):
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r_get = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+            )
+            if r_get.status_code != 200:
+                raise HTTPException(404, "Webhook não encontrado")
+            url = r_get.json().get("url")
+            if not url:
+                raise HTTPException(400, "Webhook sem URL")
 
-    data = json.loads(session_file.read_text())
-    data["webhook_enabled"] = request.enabled
-    session_file.write_text(json.dumps(data))
+            response = await client.post(
+                url,
+                json={
+                    "type": "test",
+                    "message": "Conexão OK!",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+            return {
+                "success": response.status_code == 200,
+                "status_code": response.status_code,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
-    state = "▶ retomado" if request.enabled else "⏸ pausado"
-    logger.info(f"{state} webhook de {session_id}")
 
-    return {
-        "success": True,
-        "session_id": session_id,
-        "webhook_enabled": request.enabled,
-        "webhook_url": data.get("webhook_url"),
-    }
+# 3g. Atualizar metadados da sessão (alias)
+@app.patch("/api/sessions/{session_id}")
+async def update_session(
+    session_id: str,
+    request: UpdateSessionRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
+    if request.name is None:
+        raise HTTPException(400, "Nada pra atualizar")
+    pb_id = await _resolve_pb_session_id(session_id)
+    if not pb_id:
+        raise HTTPException(404, "Sessão não encontrada no PB")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.patch(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
+                json={"name": request.name},
+            )
+        if r.status_code >= 300:
+            raise HTTPException(400, f"PB recusou: {r.text}")
+        return r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar sessão: {e}")
+
+
+# 3h. Refresh manual do cache (admin)
+@app.post("/api/webhooks/refresh-cache")
+async def refresh_webhook_cache(_user: dict = Depends(verify_pb_auth)):
+    _invalidate_webhook_cache()
+    return {"success": True}
 
 
 # -----------------------------------------------------------------------------
@@ -722,18 +1010,46 @@ async def toggle_webhook(
 # -----------------------------------------------------------------------------
 @app.get("/api/sessions")
 async def list_sessions(_user: dict = Depends(verify_pb_auth)):
-    """Lista todas as sessões (ativas e salvas)"""
+    """Lista todas as sessões (arquivo é source of truth pra credencial; PB pra metadados)."""
     saved = load_sessions()
+
+    # Cruza com PB pra buscar name + webhook_count em batch.
+    # PB não tem JOIN — faço 2 queries globais e cruz em memória (N é pequeno).
+    name_by_sid: Dict[str, str] = {}
+    pb_id_by_sid: Dict[str, str] = {}
+    counts_by_pb_id: Dict[str, int] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            sess_resp = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={"perPage": 500, "fields": "id,session_id,name"},
+            )
+            for s in sess_resp.json().get("items", []):
+                sid = s.get("session_id", "")
+                name_by_sid[sid] = s.get("name", "") or ""
+                pb_id_by_sid[sid] = s.get("id", "")
+
+            wh_resp = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+                params={"perPage": 500, "fields": "session"},
+            )
+            for w in wh_resp.json().get("items", []):
+                sid = w.get("session", "")
+                counts_by_pb_id[sid] = counts_by_pb_id.get(sid, 0) + 1
+    except Exception as e:
+        logger.warning(f"Falha ao buscar metadados PB pra list_sessions: {e}")
 
     return {
         "sessions": [
             {
                 "session_id": s["session_id"],
                 "phone": s.get("phone", ""),
-                "webhook_url": s.get("webhook_url"),
-                "webhook_enabled": s.get("webhook_enabled", True),
+                "name": name_by_sid.get(s["session_id"], "") or "",
                 "active": s["session_id"] in active_clients,
-                "created_at": s.get("created_at")
+                "created_at": s.get("created_at"),
+                "webhook_count": counts_by_pb_id.get(
+                    pb_id_by_sid.get(s["session_id"], ""), 0
+                ),
             }
             for s in saved
         ]
@@ -745,7 +1061,7 @@ async def list_sessions(_user: dict = Depends(verify_pb_auth)):
 # -----------------------------------------------------------------------------
 @app.delete("/api/session/{session_id}")
 async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth)):
-    """Remove uma sessão (desconecta e apaga)"""
+    """Remove uma sessão (desconecta cliente ativo, remove arquivo + cache)."""
     # Desconecta cliente ativo
     if session_id in active_clients:
         await active_clients[session_id].disconnect()
@@ -754,66 +1070,60 @@ async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth))
     # Remove arquivo
     delete_session_file(session_id)
 
+    # Invalida cache de webhooks dessa sessão
+    _invalidate_webhook_cache(session_id)
+
     return {"success": True}
-
-
-# -----------------------------------------------------------------------------
-# 6. Testar webhook
-# -----------------------------------------------------------------------------
-@app.post("/api/test-webhook")
-async def test_webhook(
-    request: TestWebhookRequest,
-    _user: dict = Depends(verify_pb_auth),
-):
-    """Envia uma mensagem de teste para o webhook"""
-    webhook_url = request.webhook_url
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                webhook_url,
-                json={
-                    "type": "test",
-                    "message": "Conexão OK!",
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
-            return {
-                "success": response.status_code == 200,
-                "status_code": response.status_code
-            }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 # =============================================================================
 # Funções Auxiliares
 # =============================================================================
 
-async def register_account_pb(session_id: str, phone: str, webhook_url: str | None = None):
+async def register_account_pb(
+    session_id: str,
+    phone: str,
+    name: str | None = None,
+):
+    """Registra/atualiza a conta no PB (collection `telegram_sessions`).
+
+    A StringSession NÃO é enviada — ela fica só no arquivo em
+    `/app/sessions/*.json` (credencial). A collection no PB é pra
+    metadados (name, api_id, api_hash, flags) e pros relacionamentos com
+    `telegram_webhooks`.
     """
-    Registra metadata da conta no PocketBase (collection `telegram_sessions`).
-    A StringSession NÃO é enviada — ela fica só no FA em `/app/sessions/*.json`,
-    pois a collection no PB é só pra auditoria/UI (não tem nem deve ter o
-    session_string, que é a credencial real da conta Telegram).
-    """
-    payload = {
+    payload: dict = {
         "session_id": session_id,
         "phone": phone,
         "active": True,
     }
+    if name:
+        payload["name"] = name
     if API_ID:
         payload["api_id"] = API_ID
     if API_HASH:
         payload["api_hash"] = API_HASH
-    if webhook_url:
-        payload["webhook_url"] = webhook_url
 
     try:
+        # Se já existe record com esse session_id, atualiza (mantém id e created);
+        # senão, cria. Idempotente.
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
+            find = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-                json=payload,
+                params={"filter": f'session_id="{session_id}"', "perPage": 1},
             )
+            existing = find.json().get("items", [])
+            if existing:
+                rec_id = existing[0]["id"]
+                resp = await client.patch(
+                    f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{rec_id}",
+                    json=payload,
+                )
+            else:
+                resp = await client.post(
+                    f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                    json=payload,
+                )
         if 200 <= resp.status_code < 300:
             logger.info(f"📝 Conta registrada no PocketBase: {phone}")
         else:
@@ -822,57 +1132,6 @@ async def register_account_pb(session_id: str, phone: str, webhook_url: str | No
             )
     except Exception as e:
         logger.error(f"Erro ao registrar no PocketBase: {e}")
-
-
-async def sync_webhook_pb(session_id: str, webhook_url: str):
-    """
-    Sincroniza o webhook_url no PB via PATCH no record correspondente ao
-    `session_id` (UNIQUE INDEX). O arquivo em /app/sessions/*.json continua
-    sendo a source of truth — esta função só mantém o PB consistente pra
-    auditoria/dashboards externos.
-
-    Se `webhook_url` for vazia, manda null pra limpar o campo no PB (campo
-    `url` do PB rejeita string vazia, mas aceita null).
-    """
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # 1. Acha o record pelo session_id
-            list_resp = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-                params={"filter": f'session_id="{session_id}"', "perPage": 1},
-            )
-            if list_resp.status_code != 200:
-                logger.error(
-                    f"PB falhou ao listar telegram_sessions: "
-                    f"{list_resp.status_code} {list_resp.text}"
-                )
-                return
-
-            items = list_resp.json().get("items", [])
-            if not items:
-                logger.warning(
-                    f"Nenhum record em telegram_sessions pra {session_id} "
-                    f"— webhook salvo só no arquivo (registro PB será criado "
-                    f"no próximo verify-code)"
-                )
-                return
-
-            record_id = items[0]["id"]
-
-            # 2. PATCH o webhook_url (null se vazio, pra limpar)
-            patch_resp = await client.patch(
-                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{record_id}",
-                json={"webhook_url": webhook_url if webhook_url else None},
-            )
-            if 200 <= patch_resp.status_code < 300:
-                logger.info(f"🔄 Webhook sincronizado no PB: {session_id}")
-            else:
-                logger.error(
-                    f"PB recusou PATCH webhook: {patch_resp.status_code} "
-                    f"{patch_resp.text}"
-                )
-    except Exception as e:
-        logger.error(f"Erro ao sincronizar webhook no PB: {e}")
 
 
 # -----------------------------------------------------------------------------

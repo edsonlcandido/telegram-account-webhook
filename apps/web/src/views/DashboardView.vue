@@ -210,16 +210,29 @@
             >
               <div class="flex items-center justify-between">
                 <!-- Account Info -->
-                <div class="flex items-center gap-4">
-                  <!-- Avatar -->
-                  <div class="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-xl font-bold">
+                <div class="flex items-center gap-4 min-w-0 flex-1">
+                  <!-- Avatar (sempre últimos 4 dígitos do telefone) -->
+                  <div class="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-xl font-bold flex-shrink-0">
                     {{ session.phone.slice(-4) }}
                   </div>
 
-                  <div>
-                    <p class="font-semibold text-gray-900">{{ formatPhone(session.phone) }}</p>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <p class="font-semibold text-gray-900 truncate">
+                        {{ session.name || formatPhone(session.phone) }}
+                      </p>
+                      <button
+                        @click="openRenameModal(session)"
+                        class="text-gray-400 hover:text-blue-600 flex-shrink-0"
+                        :title="session.name ? 'Editar apelido' : 'Definir apelido'"
+                      >
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                    </div>
+                    <p v-if="session.name" class="text-xs text-gray-500 mt-0.5">{{ formatPhone(session.phone) }}</p>
                     <div class="flex items-center gap-2 mt-1">
-                      <!-- Status Badge -->
                       <span
                         class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
                         :class="session.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
@@ -227,29 +240,27 @@
                         <span class="w-1.5 h-1.5 rounded-full mr-1" :class="session.active ? 'bg-green-500' : 'bg-red-500'"></span>
                         {{ session.active ? 'Online' : 'Offline' }}
                       </span>
-
-                      <!-- Webhook Status -->
                       <span
                         class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                        :class="session.webhook_url ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800'"
+                        :class="session.webhook_count > 0 ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800'"
                       >
-                        {{ session.webhook_url ? 'Webhook OK' : 'Sem webhook' }}
+                        {{ session.webhook_count > 0 ? `${session.webhook_count} webhook${session.webhook_count > 1 ? 's' : ''}` : 'Sem webhook' }}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 <!-- Actions -->
-                <div class="flex items-center gap-3">
+                <div class="flex items-center gap-3 flex-shrink-0">
                   <button
-                    @click="router.push(`/webhook/${session.session_id}`)"
+                    @click="router.push(`/webhooks/${session.session_id}`)"
                     class="inline-flex items-center px-4 py-2 border border-blue-300 text-blue-600 font-medium rounded-lg hover:bg-blue-50 transition-colors"
-                    :title="session.webhook_url ? 'Alterar webhook' : 'Configurar webhook'"
+                    :title="session.webhook_count > 0 ? 'Gerenciar webhooks' : 'Configurar primeiro webhook'"
                   >
                     <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
-                    Webhook
+                    Webhooks
                   </button>
 
                   <button
@@ -266,26 +277,6 @@
                   </button>
 
                   <button
-                    @click="toggleWebhook(session)"
-                    :disabled="togglingId === session.session_id || !session.webhook_url"
-                    :title="!session.webhook_url
-                      ? 'Configure o webhook primeiro'
-                      : (session.webhook_enabled ? 'Pausar envio ao webhook' : 'Retomar envio ao webhook')"
-                    :class="session.webhook_enabled
-                      ? 'border-purple-300 text-purple-600 hover:bg-purple-50'
-                      : 'border-orange-300 text-orange-600 hover:bg-orange-50'"
-                    class="inline-flex items-center px-4 py-2 border font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <svg v-if="session.webhook_enabled" class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <svg v-else class="h-4 w-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                    {{ togglingId === session.session_id ? '...' : (session.webhook_enabled ? 'Pausar' : 'Retomar') }}
-                  </button>
-
-                  <button
                     @click="confirmDelete(session)"
                     class="inline-flex items-center px-4 py-2 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors"
                     title="Remover conta"
@@ -296,14 +287,6 @@
                     Remover
                   </button>
                 </div>
-              </div>
-
-              <!-- Webhook URL if configured -->
-              <div v-if="session.webhook_url" class="mt-3 ml-18">
-                <p class="text-xs text-gray-500">
-                  <span class="font-medium">Webhook:</span>
-                  <code class="ml-2 px-2 py-0.5 bg-gray-100 rounded text-gray-600">{{ session.webhook_url }}</code>
-                </p>
               </div>
             </div>
           </div>
@@ -358,6 +341,61 @@
                   {{ deleteModal.loading ? 'Removendo...' : 'Remover' }}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Rename (alias) Modal -->
+    <Teleport to="body">
+      <div v-if="renameModal.show" class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex min-h-full items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 transition-opacity" @click="closeRenameModal"></div>
+          <div class="relative bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <h3 class="text-xl font-bold text-gray-900 mb-1">
+              {{ renameModal.session?.name ? 'Editar apelido' : 'Definir apelido' }}
+            </h3>
+            <p class="text-sm text-gray-500 mb-6">
+              Identifica a conta na dashboard. Se vazio, o número é usado.
+            </p>
+
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Apelido</label>
+                <input
+                  v-model="renameModal.name"
+                  type="text"
+                  maxlength="60"
+                  placeholder="ex.: Suporte, Vendas, Pessoal"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  :disabled="renameModal.saving"
+                  @keyup.enter="saveRename"
+                />
+                <p class="mt-1 text-xs text-gray-500">
+                  {{ renameModal.name.length }} / 60 caracteres
+                </p>
+              </div>
+              <div v-if="renameModal.error" class="p-3 rounded-lg bg-red-50 border border-red-200">
+                <p class="text-sm text-red-700">{{ renameModal.error }}</p>
+              </div>
+            </div>
+
+            <div class="flex gap-3 mt-6">
+              <button
+                @click="closeRenameModal"
+                :disabled="renameModal.saving"
+                class="flex-1 px-4 py-3 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                @click="saveRename"
+                :disabled="renameModal.saving"
+                class="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium rounded-xl hover:from-blue-600 hover:to-purple-600 disabled:opacity-50"
+              >
+                {{ renameModal.saving ? 'Salvando...' : 'Salvar' }}
+              </button>
             </div>
           </div>
         </div>
@@ -447,7 +485,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useTelegramStore } from '../stores/telegram'
@@ -469,7 +507,7 @@ const userName = computed(() => {
 
 // Stats
 const configuredWebhooks = computed(() => {
-  return telegramStore.sessions.filter(s => s.webhook_url).length
+  return telegramStore.sessions.reduce((acc, s) => acc + (s.webhook_count || 0), 0)
 })
 
 // Format phone for display
@@ -508,18 +546,46 @@ const executeDelete = async () => {
   }
 }
 
-// Toggle webhook dispatch (play/pause) — não mexe na URL, só liga/desliga o envio
-const togglingId = ref<string | null>(null)
-async function toggleWebhook(session: TelegramSession) {
-  togglingId.value = session.session_id
+// Modal de renomear (alias)
+const renameModal = reactive({
+  show: false,
+  session: null as TelegramSession | null,
+  name: '',
+  saving: false,
+  error: '',
+})
+
+function openRenameModal(session: TelegramSession) {
+  renameModal.session = session
+  renameModal.name = session.name || ''
+  renameModal.error = ''
+  renameModal.show = true
+}
+
+function closeRenameModal() {
+  if (renameModal.saving) return
+  renameModal.show = false
+  renameModal.session = null
+  renameModal.error = ''
+}
+
+async function saveRename() {
+  if (!renameModal.session) return
+  const newName = renameModal.name.trim()
+  if (newName.length > 60) {
+    renameModal.error = 'Máximo 60 caracteres'
+    return
+  }
+  renameModal.saving = true
+  renameModal.error = ''
   try {
-    await telegramApi.toggleWebhook(session.session_id, !session.webhook_enabled)
-    await telegramStore.fetchSessions()
-  } catch (error) {
-    console.error('Erro ao alternar webhook:', error)
-    alert('Erro ao alternar webhook. Tente novamente.')
+    await telegramStore.setSessionName(renameModal.session.session_id, newName)
+    renameModal.show = false
+    renameModal.session = null
+  } catch (e: any) {
+    renameModal.error = e?.message || 'Erro ao renomear'
   } finally {
-    togglingId.value = null
+    renameModal.saving = false
   }
 }
 

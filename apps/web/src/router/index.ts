@@ -3,7 +3,7 @@ import pb from '../services/pocketbase'
 import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import AddTelegramView from '../views/AddTelegramView.vue'
-import WebhookConfigView from '../views/WebhookConfigView.vue'
+import WebhooksListView from '../views/WebhooksListView.vue'
 import ApiDocsView from '../views/ApiDocsView.vue'
 
 const router = createRouter({
@@ -32,9 +32,14 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Legacy: /webhook/:sessionId → redireciona pra /webhooks/:sessionId
       path: '/webhook/:sessionId',
-      name: 'webhook-config',
-      component: WebhookConfigView,
+      redirect: (to) => `/webhooks/${to.params.sessionId}`,
+    },
+    {
+      path: '/webhooks/:sessionId',
+      name: 'webhooks-list',
+      component: WebhooksListView,
       meta: { requiresAuth: true },
       props: true,
     },

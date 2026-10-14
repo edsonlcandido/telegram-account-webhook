@@ -414,6 +414,16 @@ function goBack() {
               pega do <code>pb.authStore.token</code> automaticamente).
             </p>
           </div>
+          <div class="flex gap-3">
+            <span class="text-purple-600 font-bold">•</span>
+            <p>
+              <strong>Múltiplos webhooks + filtros.</strong> Uma sessão pode ter N
+              webhooks, cada um com filtros próprios: <code>filter_direction</code>
+              (all/incoming/outgoing), <code>filter_chat_type</code>
+              (all/private/group/supergroup/channel) e <code>filter_text_match</code>
+              (none/equals/contains). Configure na tela de webhooks da conta.
+            </p>
+          </div>
         </div>
       </section>
     </main>
