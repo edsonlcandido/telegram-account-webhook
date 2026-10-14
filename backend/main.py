@@ -155,335 +155,154 @@ def delete_session_file(session_id: str):
 
 
 # =============================================================================
-# Event Handler - Forward para Webhook (multi-webhook com filtros)
+# Event Handler - INSERT em telegram_messages, hook do PB distribui
 # =============================================================================
-
-# Cache de webhooks ativos por sessão: session_id -> (timestamp, list[dict]).
-# Cada item é o record completo do PB. TTL 30s — webhooks novos/editados
-# aparecem no máximo 30s depois; endpoints que mutam webhooks invalidam
-# explicitamente o cache pra reduzir a janela.
-_WEBHOOK_CACHE: Dict[str, tuple[float, list[dict]]] = {}
-_WEBHOOK_CACHE_TTL_SEC = 30.0
-# Cache de "qual user PB é dono de qual sessão Telegram".
-# Populado no register_account_pb (signup). Permite ao handler do Telethon
-# (que roda em background, sem request HTTP) saber qual token usar pra
-# falar com o PB em nome do user.
+#
+# A lógica de filtro + envio pros webhooks agora é responsabilidade do hook
+# onRecordAfterCreate em pb_hooks/main.pb.js (roda DENTRO do PB, sem auth,
+# sem propagação de token). O FastAPI só insere o record da mensagem.
+#
+# Caches necessários (todos populados em runtime):
+# - _SESSION_OWNER[session_id] = pb_user_id  → qual user "dono" da sessão
+# - _USER_TOKENS[pb_user_id] = user_token    → JWT do user pra fazer INSERT
+# - _SESSION_PB_ID[session_id] = pb_record_id → record id do PB (pra relation)
+#
+# _SESSION_OWNER é populado no register_account_pb (background task do
+# verify_code). _USER_TOKENS é populado em verify_pb_auth. _SESSION_PB_ID
+# é populado no register_account_pb também. Se uma sessão for criada
+# antes desse deploy, o cache vai estar vazio e o handler não consegue
+# inserir — aí o user precisa re-adicionar via signup (que re-popula).
 _SESSION_OWNER: Dict[str, str] = {}  # session_id -> pb_user_id
-# Cache de tokens JWT ativos por user PB.
-# Populado em verify_pb_auth toda vez que o user chama qualquer endpoint.
-# O _get_active_webhooks consulta esse cache pra falar com o PB.
-# Tokens são renovados (refreshed) automaticamente pelo verify_pb_auth.
 _USER_TOKENS: Dict[str, str] = {}  # pb_user_id -> user_token
-# Flag pra logar o warning de service token ausente SÓ UMA VEZ no startup,
-# não toda mensagem (evita flood no log).
-_service_token_warned: bool = False
+_SESSION_PB_ID: Dict[str, str] = {}  # session_id -> pb_record_id
 
 
-def _service_pb_headers() -> dict:
-    """Header pro PB com o service token global (env var) OU cache por user.
-
-    Ordem de preferência:
-    1. POCKETBASE_SERVICE_TOKEN (env var) — se configurado, sempre usa.
-    2. Token do user "dono" da sessão (cache _USER_TOKENS[_SESSION_OWNER[session_id]]).
-       Atualizado automaticamente em verify_pb_auth.
-
-    Se nenhum dos dois estiver disponível, retorna {} (PB rejeitará com 401).
-    """
-    if POCKETBASE_SERVICE_TOKEN:
-        return {"Authorization": POCKETBASE_SERVICE_TOKEN}
-    return {}
-
-
-def _session_token_headers(session_id: str) -> dict:
-    """Header pro PB específico da sessão Telegram — usa o token do user dono.
-
-    Sem isso, o handler do Telethon (background, sem request) não tem
-    accesso ao token do user. O token é cacheado em _USER_TOKENS toda
-    vez que o user chama qualquer endpoint, então fica fresco (5 min
-    de TTL no verify_pb_auth).
-    """
-    owner_id = _SESSION_OWNER.get(session_id)
-    if not owner_id:
-        return {}
-    user_token = _USER_TOKENS.get(owner_id)
-    if not user_token:
-        return {}
-    return {"Authorization": user_token}
-
-
-async def _get_active_webhooks(session_id: str) -> list[dict]:
-    """Busca webhooks ativos (enabled=true) da sessão, com cache 30s.
-
-    Ordem de preferência do token PB:
-    1. POCKETBASE_SERVICE_TOKEN (env var, global)
-    2. Token do user dono da sessão (cache _USER_TOKENS, populado em
-       verify_pb_auth). OBRIGATÓRIO se não tiver env var — sem isso o
-       handler do Telethon não tem como falar com o PB.
-    """
-    import time as _time
-    global _service_token_warned
-    now = _time.time()
-    cached = _WEBHOOK_CACHE.get(session_id)
-    if cached and (now - cached[0]) < _WEBHOOK_CACHE_TTL_SEC:
-        return cached[1]
-
-    # 1) Tenta o env var primeiro
-    headers = _service_pb_headers()
-    # 2) Se não tiver, usa o token do user dono da sessão
-    if not headers:
-        headers = _session_token_headers(session_id)
-
-    if not headers and not _service_token_warned:
-        logger.warning(
-            "Sem token PB disponível pro handler (nem POCKETBASE_SERVICE_TOKEN "
-            "env var, nem user dono da sessão). Webhook forwarding vai falhar "
-            "com 401 — popule POCKETBASE_SERVICE_TOKEN OU use a UI com a "
-            "sessão logada pra popular _USER_TOKENS."
-        )
-        _service_token_warned = True
-
-    # 1) Acha o record da sessão no PB
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        sess_resp = await client.get(
-            f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-            params={"filter": f'session_id="{session_id}"', "perPage": 1},
-            headers=headers,
-        )
-        sess_items = sess_resp.json().get("items", [])
-        if not sess_items:
-            # Sessão não existe no PB (saiu do ar) — cacheia [] por 30s
-            # pra não martelar o PB a cada mensagem. Mas só se o request
-            # não falhou por auth.
-            if sess_resp.status_code == 200:
-                _WEBHOOK_CACHE[session_id] = (now, [])
-            return []
-        pb_session_id = sess_items[0]["id"]
-
-        # 2) Lista os webhooks ativos
-        wh_resp = await client.get(
-            f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
-            params={"filter": f'session="{pb_session_id}" && enabled=true', "perPage": 500},
-            headers=headers,
-        )
-        if wh_resp.status_code != 200:
-            # 401/403/500: NÃO cacheia — tenta de novo na próxima mensagem.
-            # Senão fica 30s preso no estado "envenenado".
-            logger.warning(
-                f"PB recusou listagem de webhooks: {wh_resp.status_code} {wh_resp.text[:200]}"
-            )
-            return []
-        webhooks = wh_resp.json().get("items", [])
-
-    _WEBHOOK_CACHE[session_id] = (now, webhooks)
-    return webhooks
-
-
-def _invalidate_webhook_cache(session_id: str | None = None) -> None:
-    """Invalida o cache. Se session_id=None, invalida tudo (usar com cuidado)."""
-    if session_id is None:
-        _WEBHOOK_CACHE.clear()
-    else:
-        _WEBHOOK_CACHE.pop(session_id, None)
-
-
-def _matches_filters(event, webhook: dict) -> bool:
-    """Avalia os 3 filtros do webhook contra o evento do Telethon."""
-    # Filtro de direção
-    direction = webhook.get("filter_direction", "all")
-    if direction == "incoming" and event.outgoing:
-        return False
-    if direction == "outgoing" and not event.outgoing:
-        return False
-
-    # Filtro de tipo de chat
-    chat_type = webhook.get("filter_chat_type", "all")
-    if chat_type != "all" and chat_type != _chat_type(event):
-        return False
-
-    # Filtro de texto
-    op = webhook.get("filter_text_match_operator", "none")
-    value = (webhook.get("filter_text_match_value") or "").strip()
-    if op == "none" or not value:
-        return True
-    text = (event.text or "").strip()
-    if op == "equals":
-        return text == value
-    if op == "contains":
-        return value in text
-    return True
-
-
-async def handle_new_message(event, session_id: str):
-    """Handler que dispara quando chega nova mensagem nova.
-
-    Pra cada webhook ativo da sessão (PB + cache), avalia os filtros
-    configurados e faz POST na URL se passar. Best-effort: status != 200
-    ou timeout são logados, sem retry.
-    """
-    try:
-        logger.info(
-            f"📩 Nova mensagem recebida: session={session_id} "
-            f"chat={event.chat_id} msg_id={event.id}"
-        )
-
-        if session_id not in active_clients:
-            logger.warning(
-                f"⚠️ Mensagem de sessão {session_id} NÃO está em active_clients "
-                f"— handler foi chamado mas cliente foi desconectado?"
-            )
-            return
-
-        webhooks = await _get_active_webhooks(session_id)
-        if not webhooks:
-            logger.debug(
-                f"⏭️ Sessão {session_id} sem webhooks ativos, ignorando"
-            )
-            return
-
-        # Filtra pelos filtros configurados em cada webhook
-        matched = [wh for wh in webhooks if _matches_filters(event, wh)]
-        if not matched:
-            logger.debug(
-                f"⏭️ Msg #{event.id} não casou com nenhum webhook ativo "
-                f"de {session_id} (filtros)"
-            )
-            return
-
-        message_data = _build_message_payload(event, session_id)
-
-        # Forward pra cada webhook que passou nos filtros
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for wh in matched:
-                url = wh.get("url")
-                wh_id = wh.get("id", "?")
-                try:
-                    response = await client.post(url, json=message_data)
-                    if response.status_code == 200:
-                        logger.info(
-                            f"📤 Msg #{event.id} de "
-                            f"{message_data.get('sender_name', '?')} → "
-                            f"webhook {wh_id} OK"
-                        )
-                    else:
-                        logger.warning(
-                            f"📤 Msg #{event.id} → webhook {wh_id} "
-                            f"retornou {response.status_code}"
-                        )
-                except Exception as send_err:
-                    logger.warning(
-                        f"📤 Msg #{event.id} → webhook {wh_id} falhou: "
-                        f"{send_err}"
-                    )
-
-    except Exception as e:
-        logger.error(f"Erro ao processar mensagem: {e}")
-
-
-def _classify_media(media) -> tuple[bool, str | None, str | None]:
-    """
-    Classifica o `event.media` (MessageMediaPhoto / MessageMediaDocument / etc.)
-    num tipo simples pro payload do webhook. Retorna (has_media, media_type, mime_type).
-    """
-    if media is None:
-        return False, None, None
-
-    if isinstance(media, tl_types.MessageMediaPhoto):
-        return True, "photo", "image/jpeg"
-
-    if isinstance(media, tl_types.MessageMediaGeo):
-        return True, "geo", None
-
-    if isinstance(media, tl_types.MessageMediaContact):
-        return True, "contact", None
-
-    if isinstance(media, tl_types.MessageMediaPoll):
-        return True, "poll", None
-
-    if isinstance(media, tl_types.MessageMediaDocument):
-        doc = media.document
-        mime = getattr(doc, "mime_type", None)
-        kind = "document"
-        # heurística por mime
-        if mime:
-            if mime.startswith("image/"):
-                kind = "photo" if mime == "image/webp" else "image"
-            elif mime.startswith("video/"):
-                kind = "video"
-            elif mime.startswith("audio/"):
-                kind = "voice" if mime == "audio/ogg" else "audio"
-        # sticker é um documento com attribute Sticker
-        if doc and any(isinstance(a, tl_types.DocumentAttributeSticker) for a in (doc.attributes or [])):
-            kind = "sticker"
-        return True, kind, mime
-
-    # fallback genérico
-    return True, type(media).__name__, None
-
-
-def _chat_type(event) -> str:
-    """
-    Retorna o tipo do chat da mensagem: 'private' | 'group' | 'supergroup' | 'channel'.
-    Usa os helpers do Telethon (is_private, is_group, is_channel).
-    """
+def _classify_chat_type(event) -> str:
+    """Retorna o tipo do chat: 'private' | 'group' | 'supergroup' | 'channel' | 'unknown'."""
     if event.is_private:
         return "private"
     if event.is_channel:
         return "channel"
     if event.is_group:
+        # Telethon não distingue group de supergroup via flag — assume 'group'
+        # (o hook pode fazer o refinamento se precisar)
         return "group"
     return "unknown"
 
 
-def _build_message_payload(event, session_id: str) -> dict:
+def _chat_title(event) -> str | None:
+    """Title do chat (pra groups) ou first_name (pra private). None se não tem."""
+    if not event.chat:
+        return None
+    return getattr(event.chat, "title", None) or getattr(event.chat, "first_name", None)
+
+
+def _sender_name(event) -> str | None:
+    """Nome completo do sender, ou None."""
+    if not event.sender:
+        return None
+    first = event.sender.first_name or ""
+    last = f" {event.sender.last_name}" if getattr(event.sender, "last_name", None) else ""
+    full = (first + last).strip()
+    return full or None
+
+
+async def handle_new_message(event, session_id: str):
+    """Handler que dispara quando chega nova mensagem.
+
+    Comportamento novo (a partir desse refactor): só faz INSERT em
+    `telegram_messages` no PB. O hook do PB cuida de listar webhooks
+    ativos, aplicar filtros, e fazer POST em cada um. Sem auth propagation
+    problema, sem cache envenenado, sem race condition.
     """
-    Monta o payload enriquecido enviado pro webhook. Inclui:
-    - session_id, message_id, chat_id, text
-    - chat_type (private/group/supergroup/channel) + chat_title quando aplicável
-    - sender_id, sender_name, sender_username
-    - is_reply + reply_to_message_id (pra permitir responder via /api/send-message)
-    - has_media, media_type, media_mime_type
-    - timestamp
-    """
-    has_media, media_type, media_mime = _classify_media(event.media)
+    try:
+        logger.info(
+            f"📩 Nova mensagem: session={session_id} "
+            f"chat={event.chat_id} msg_id={event.id}"
+        )
 
-    # chat_title: para private é o first_name do peer, senão é o title do chat
-    chat_title = None
-    if event.chat:
-        chat_title = getattr(event.chat, "title", None) or getattr(event.chat, "first_name", None)
-
-    # reply_to: Telethon expõe em event.reply_to e event.reply_to_msg_id (se reply)
-    reply_to_msg_id = getattr(event, "reply_to_msg_id", None)
-    is_reply = reply_to_msg_id is not None
-
-    # sender_username: nem todo User tem; pode ser None
-    sender_username = None
-    if event.sender and getattr(event.sender, "username", None):
-        sender_username = event.sender.username
-
-    return {
-        "session_id": session_id,
-        "message_id": event.id,
-        "chat_id": event.chat_id,
-        "chat_type": _chat_type(event),
-        "chat_title": chat_title,
-        "outgoing": bool(event.outgoing),  # True se foi enviada pela própria conta
-        "text": event.text or "",
-        "sender_id": event.sender_id,
-        "sender_name": (
-            (
-                (event.sender.first_name or "")
-                + (f" {event.sender.last_name}" if event.sender.last_name else "")
+        if session_id not in active_clients:
+            logger.warning(
+                f"⚠️ Msg de sessão {session_id} que não está em active_clients"
             )
-            if event.sender else None
-        ),
-        "sender_username": sender_username,
-        "is_reply": is_reply,
-        "reply_to_message_id": reply_to_msg_id,
-        "has_media": has_media,
-        "media_type": media_type,
-        "media_mime_type": media_mime,
-        "timestamp": datetime.now().isoformat(),
-    }
+            return
+
+        # Ignora mensagens que NÓS mesmos enviamos (loop infinito)
+        if _is_recently_sent(event.id):
+            return
+
+        # Acha o token PB do user dono da sessão
+        owner_id = _SESSION_OWNER.get(session_id)
+        user_token = _USER_TOKENS.get(owner_id) if owner_id else None
+        pb_session_id = _SESSION_PB_ID.get(session_id)
+
+        # Fallback: se o cache não tem, busca no PB (1 chamada extra).
+        # Caso comum: sessão criada antes desse deploy ou container
+        # reiniciou e o cache em memória zerou.
+        if (not user_token) or (not pb_session_id):
+            if not user_token:
+                logger.warning(
+                    f"⚠️ Sem token PB pra sessão {session_id} (_SESSION_OWNER="
+                    f"{owner_id!r}, _USER_TOKENS tem esse user? "
+                    f"{bool(user_token)}). Ignorando mensagem."
+                )
+                return
+            # pb_session_id ausente — busca
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.get(
+                        f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                        params={"filter": f'session_id="{session_id}"', "perPage": 1},
+                        headers={"Authorization": user_token},
+                    )
+                items = r.json().get("items", [])
+                if not items:
+                    logger.warning(
+                        f"⚠️ Sessão {session_id} não existe no PB — ignorando msg"
+                    )
+                    return
+                pb_session_id = items[0]["id"]
+                _SESSION_PB_ID[session_id] = pb_session_id
+            except Exception as e:
+                logger.error(f"Erro buscando pb_id da sessão: {e}")
+                return
+
+        # Monta o record mínimo (hook do PB lê o record e processa)
+        sender_name = _sender_name(event)
+        chat_title = _chat_title(event)
+        msg_data = {
+            "session": pb_session_id,
+            "chat_id": int(event.chat_id) if event.chat_id is not None else 0,
+            "chat_type": _classify_chat_type(event),
+            "chat_title": chat_title or "",
+            "direction": "outgoing" if event.outgoing else "incoming",
+            "sender_id": int(event.sender_id) if event.sender_id is not None else 0,
+            "sender_name": sender_name or "",
+            "text": event.text or "",
+        }
+
+        # INSERT no PB → hook onRecordAfterCreate dispara automaticamente
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
+                    json=msg_data,
+                    headers={"Authorization": user_token},
+                )
+            if r.status_code >= 300:
+                logger.warning(
+                    f"PB recusou INSERT msg: {r.status_code} {r.text[:200]}"
+                )
+            else:
+                logger.info(
+                    f"📨 Msg #{event.id} inserida em telegram_messages (sessão "
+                    f"{session_id}); hook do PB vai distribuir pros webhooks"
+                )
+        except Exception as e:
+            logger.error(f"Erro fazendo INSERT de msg no PB: {e}")
+
+    except Exception as e:
+        logger.error(f"Erro ao processar mensagem: {e}")
 
 
 # =============================================================================
@@ -983,7 +802,7 @@ async def create_webhook(
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
-        _invalidate_webhook_cache(session_id)
+        pass  # invalidate removed (hook do PB faz cache via SQL)
         result = r.json()
         result["session_id"] = session_id
         return result
@@ -1017,7 +836,7 @@ async def update_webhook(
         result = r.json()
         sid = await _resolve_session_id_from_pb(result.get("session", ""), user_token)
         if sid:
-            _invalidate_webhook_cache(sid)
+            pass  # invalidate removed (hook do PB faz cache via SQL)
         return result
     except HTTPException:
         raise
@@ -1050,7 +869,7 @@ async def delete_webhook(
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
         if sid:
-            _invalidate_webhook_cache(sid)
+            pass  # invalidate removed (hook do PB faz cache via SQL)
         return {"success": True}
     except HTTPException:
         raise
@@ -1084,7 +903,7 @@ async def toggle_webhook(
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
         if sid:
-            _invalidate_webhook_cache(sid)
+            pass  # invalidate removed (hook do PB faz cache via SQL)
         return r.json()
     except HTTPException:
         raise
@@ -1161,7 +980,7 @@ async def update_session(
 # 3h. Refresh manual do cache (admin)
 @app.post("/api/webhooks/refresh-cache")
 async def refresh_webhook_cache(_user: dict = Depends(verify_pb_auth)):
-    _invalidate_webhook_cache()
+    pass  # invalidate removed (hook do PB faz cache via SQL)
     return {"success": True}
 
 
@@ -1236,7 +1055,7 @@ async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth))
     delete_session_file(session_id)
 
     # Invalida cache de webhooks dessa sessão
-    _invalidate_webhook_cache(session_id)
+    pass  # invalidate removed (hook do PB faz cache via SQL)
 
     # Remove associação session_id -> user_id
     _SESSION_OWNER.pop(session_id, None)
@@ -1306,7 +1125,8 @@ async def register_account_pb(
             logger.info(f"📝 Conta registrada no PocketBase: {phone}")
             # Cacheia a associação session_id -> pb_user_id. O handler do
             # Telethon (que roda em background) consulta _SESSION_OWNER
-            # pra saber qual token do PB usar pro _get_active_webhooks.
+            # pra saber qual token do PB usar pra inserir em
+            # telegram_messages (o hook do PB cuida do resto).
             if user_token:
                 # Procura qual user_id tem esse token no cache. O cache
                 # _USER_TOKENS é {user_id -> token}, populado em
@@ -1326,6 +1146,13 @@ async def register_account_pb(
                         f"forwarding não vai funcionar até o user chamar "
                         f"qualquer endpoint autenticado e o backend recachear."
                     )
+            # Cacheia o record id do PB pra relation no INSERT de mensagens
+            try:
+                resp_json = resp.json()
+                if resp_json.get("id"):
+                    _SESSION_PB_ID[session_id] = resp_json["id"]
+            except Exception:
+                pass
         else:
             logger.error(
                 f"PB recusou registro de {phone}: {resp.status_code} {resp.text}"
