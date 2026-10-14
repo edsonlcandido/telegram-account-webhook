@@ -61,11 +61,6 @@ const TEST_PAYLOAD = JSON.stringify(
   2,
 )
 
-const CURL_INCOMING = `# Receptor de exemplo em Node.js (Express). Responde 200 e loga o payload.
-curl -X POST https://seu-servico.com/webhook \\
-  -H "Content-Type: application/json" \\
-  -d '${INCOMING_PAYLOAD.replace(/\n/g, '')}'`
-
 const CURL_REPLY = `# Responde à mensagem que chegou no webhook. Requer o token PB.
 curl -X POST https://api-telegram.ehtudo.app/api/send-message \\
   -H "Content-Type: application/json" \\
@@ -74,6 +69,15 @@ curl -X POST https://api-telegram.ehtudo.app/api/send-message \\
 
 // Body de retorno pro n8n (HTTP Response node) — só precisa devolver 200 com {ok:true}
 const N8N_RESPONSE_BODY = JSON.stringify({ ok: true, received: true }, null, 2)
+
+// Mapeamento de expressões n8n pra mostrar no template. Sem isso o Vue
+// tentaria avaliar `$json.body.X` como propriedade da instância e quebraria.
+const N8N_MAPPING = [
+  'session_id          →  {{$json.body.session_id}}',
+  'chat_id             →  {{$json.body.chat_id}}',
+  'text                →  escreva a resposta (pode vir de AI / DB / hardcoded)',
+  'reply_to_message_id →  {{$json.body.message_id}}  (se quiser responder com quote)',
+].join('\n              ')
 
 // Composable Vue pronto pra responder do frontend sem repetir boilerplate
 const VUE_COMPOSABLE = `// apps/web/src/composables/useTelegramReply.ts
@@ -128,7 +132,7 @@ async function send() {
   await reply(props.payload, text.value.trim())
   text.value = ''
 }
-</script>
+<\u002Fscript>
 
 <template>
   <div>
@@ -138,7 +142,7 @@ async function send() {
     </button>
     <p v-if="error" class="text-red-600">{{ error }}</p>
   </div>
-</template>`
+<\u002Ftemplate>`
 
 // Hook JS que pode ser usado dentro do PocketBase como alternativa ao n8n:
 // cria uma collection \`telegram_webhook_events\` e grava cada POST recebido.
@@ -579,13 +583,7 @@ function goBack() {
 
           <div class="text-xs text-gray-500 bg-pink-50 border border-pink-200 rounded-lg p-3">
             <strong>Mapeamento útil no n8n:</strong>
-            <code class="block mt-1">
-              session_id → <code>{`{{$json.body.session_id}}`}</code><br />
-              chat_id → <code>{`{{$json.body.chat_id}}`}</code><br />
-              text → escreva a resposta (pode vir de AI / DB / hardcoded)<br />
-              reply_to_message_id → <code>{`{{$json.body.message_id}}`}</code>
-              (se quiser responder com quote)
-            </code>
+            <pre class="mt-2 font-mono whitespace-pre-wrap">{{ N8N_MAPPING }}</pre>
           </div>
         </div>
       </section>

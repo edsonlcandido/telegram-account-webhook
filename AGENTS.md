@@ -112,3 +112,51 @@ npm run preview      # Preview do PocketBase
 - Backend Python FastAPI em `backend/`
 - PocketBase 0.40.5 standalone
 - Rede Docker interna para comunicação entre serviços
+
+## Workflow obrigatório (build → commit → deploy)
+
+**REGRA: antes de qualquer `git commit` + `git push` que toque em `apps/web/src/**` ou `apps/landing/src/**`, SEMPRE rodar build local. Se quebrar, NÃO COMITAR.**
+
+```bash
+# Em PowerShell (npm é bloqueado por ExecutionPolicy; usar cmd.exe /c)
+cmd.exe /c "cd /d apps\web && npm run build"
+cmd.exe /c "cd /d apps\landing && npm run build"   # só se mexeu na landing
+```
+
+O `npm run build` = `vue-tsc && vite build` (TS check + Vite). Se o TS reclamar, o build falha e o deploy do Easypanel (Dockerfile.Application) também vai falhar — usuário fica sem saber.
+
+### Validação no navegador depois do deploy
+
+1. Forçar reload da página (cache do navegador pode segurar o bundle antigo mesmo com hash novo): abrir com `?v=novo` na URL ou `Ctrl+Shift+R`.
+2. Confirmar que o `index.html` aponta pro bundle novo:
+   ```bash
+   curl -s https://telegram-webhook.ehtudo.app/app/ | grep assets
+   ```
+3. Procurar texto único do que foi mudado no bundle novo:
+   ```bash
+   curl -s https://telegram-webhook.ehtudo.app/app/assets/index-XXXXX.js | grep "texto único"
+   ```
+
+### Deploy não é 100% automático
+
+O `autoDeploy: false` no Easypanel pra `telegram-account-webhook`. Push pro `main` sozinho NÃO dispara rebuild. É preciso disparar o webhook de deploy manualmente:
+
+```bash
+$body = '{}'
+Invoke-WebRequest -Method POST -Uri 'http://82.112.244.9:3000/api/deploy/d08148ad7475ab169bc6b4baac629cc1c0e18c900b11d525' -ContentType 'application/json' -Body $body -UseBasicParsing
+```
+
+Ou via MCP do Easypanel: `deployAppService` com `{projectName: "eh-tudo", serviceName: "telegram-account-webhook"}` (precisa de `execute_destructive`, não `execute_mutation`).
+
+## Pegadinhas conhecidas (Vue 3 SFC + vue-tsc)
+
+- **`</script>` literal dentro de template string JS quebra o parser SFC** (ele fecha o bloco de script no primeiro `</script>` que achar). Atinge também `</template>` e `</style>`. Soluções:
+  - Unicode escape: `<\u002Fscript>` (parser não vê, JS engine converte em runtime)
+  - Concatenar: `'</' + 'script>'`
+  - Dividir em array: `['<', '/script>'].join('')`
+- **Expressões com `$` no template Vue** (ex: `{{$json.body.x}}` pra documentar n8n) são interpretadas como propriedade da instância. Soluções:
+  - Mover pra constante JS e renderizar via `{{ MINHA_CONSTANTE }}`
+  - Ou usar `v-pre` no elemento que contém o texto literal
+- **TS6133 "declared but never read"** se uma constante foi usada só em comentário ou removida do template — deletar a declaração (vue-tsc é estrito).
+- **Bundle JS tem cache agressivo** no navegador do usuário final: depois de deploy, pode aparecer a versão antiga mesmo com hash novo. Sempre validar via `curl` no asset, não só no HTML.
+
