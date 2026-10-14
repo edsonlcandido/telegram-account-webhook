@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from telethon import TelegramClient
@@ -668,14 +668,15 @@ async def send_code(request: SendCodeRequest, _user: dict = Depends(verify_pb_au
 # -----------------------------------------------------------------------------
 @app.post("/api/verify-code")
 async def verify_code(
-    request: VerifyCodeRequest,
+    http_request: Request,
+    body: VerifyCodeRequest,
     background_tasks: BackgroundTasks,
     _user: dict = Depends(verify_pb_auth),
 ):
     """
     Verifica o código, cria sessão persistente e inicia escuta.
     """
-    session_id = f"pending_{request.phone_number}"
+    session_id = f"pending_{body.phone_number}"
     hash_key = f"{session_id}_hash"
 
     if session_id not in active_clients or hash_key not in active_clients:
@@ -689,26 +690,26 @@ async def verify_code(
 
     try:
         # Verifica código
-        if request.password:
+        if body.password:
             await client.sign_in(
-                request.phone_number,
-                code=request.code,
-                password=request.password,
+                body.phone_number,
+                code=body.code,
+                password=body.password,
                 phone_code_hash=phone_code_hash
             )
         else:
             await client.sign_in(
-                request.phone_number,
-                code=request.code,
+                body.phone_number,
+                code=body.code,
                 phone_code_hash=phone_code_hash
             )
 
         # Salva sessão
         session_string = client.session.save()
-        final_session_id = f"account_{request.phone_number.replace('+', '')}"
+        final_session_id = f"account_{body.phone_number.replace('+', '')}"
 
         # Persiste em arquivo (só credencial — name vai pro PB)
-        save_session(final_session_id, session_string, request.phone_number)
+        save_session(final_session_id, session_string, body.phone_number)
 
         # Move cliente para sessão final
         active_clients[final_session_id] = client
@@ -720,12 +721,23 @@ async def verify_code(
         # disco no boot via initialize_sessions → start_client).
         register_message_handler(client, final_session_id)
 
+        # Extrai o token cru do header Authorization (PB só aceita sem prefixo
+        # "Bearer"). Background tasks do FastAPI NÃO herdam o header da
+        # request original — sem repassar, o PB rejeita com 401 porque a rule
+        # `createRule: "@request.auth.id != ''"` falha em request anônimo.
+        raw_auth = http_request.headers.get("authorization", "").strip()
+        if raw_auth.lower().startswith("bearer "):
+            user_token = raw_auth[7:].strip()
+        else:
+            user_token = raw_auth
+
         # Registra no PocketBase em background (inclui o alias se o user forneceu)
         background_tasks.add_task(
             register_account_pb,
             final_session_id,
-            request.phone_number,
-            request.name,
+            body.phone_number,
+            user_token,
+            body.name,
         )
 
         return {
@@ -1083,6 +1095,7 @@ async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth))
 async def register_account_pb(
     session_id: str,
     phone: str,
+    user_token: str | None = None,
     name: str | None = None,
 ):
     """Registra/atualiza a conta no PB (collection `telegram_sessions`).
@@ -1092,6 +1105,10 @@ async def register_account_pb(
     metadados leves (phone, name) e a relação com `telegram_webhooks`.
     Credenciais do app Telegram (api_id/api_hash) vivem nos env vars
     do container e são sempre as mesmas (single-app).
+
+    `user_token` é o JWT cru do usuário (sem prefixo "Bearer" — o PB
+    não aceita). Sem ele, o PB rejeita as chamadas com 401 porque
+    `createRule: "@request.auth.id != ''"` exige auth.
     """
     payload: dict = {
         "session_id": session_id,
@@ -1100,6 +1117,12 @@ async def register_account_pb(
     if name:
         payload["name"] = name
 
+    # PB lê o header como "Authorization: <token>" (sem prefixo "Bearer").
+    # Se receber "Bearer xxx" o parse interno não reconhece o token.
+    headers: dict = {}
+    if user_token:
+        headers["Authorization"] = user_token
+
     try:
         # Se já existe record com esse session_id, atualiza (mantém id e created);
         # senão, cria. Idempotente.
@@ -1107,6 +1130,7 @@ async def register_account_pb(
             find = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
                 params={"filter": f'session_id="{session_id}"', "perPage": 1},
+                headers=headers,
             )
             existing = find.json().get("items", [])
             if existing:
@@ -1114,11 +1138,13 @@ async def register_account_pb(
                 resp = await client.patch(
                     f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{rec_id}",
                     json=payload,
+                    headers=headers,
                 )
             else:
                 resp = await client.post(
                     f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
                     json=payload,
+                    headers=headers,
                 )
         if 200 <= resp.status_code < 300:
             logger.info(f"📝 Conta registrada no PocketBase: {phone}")
