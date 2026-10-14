@@ -1307,8 +1307,11 @@ async def register_account_pb(
             # Cacheia a associação session_id -> pb_user_id. O handler do
             # Telethon (que roda em background) consulta _SESSION_OWNER
             # pra saber qual token do PB usar pro _get_active_webhooks.
-            if user_token and user_token in _USER_TOKENS:
-                # Já temos o user_id cacheado pelo verify_pb_auth
+            if user_token:
+                # Procura qual user_id tem esse token no cache. O cache
+                # _USER_TOKENS é {user_id -> token}, populado em
+                # verify_pb_auth. NÃO comparar com `in` (checaria se é
+                # CHAVE do dict, não valor — sempre False).
                 for uid, tok in _USER_TOKENS.items():
                     if tok == user_token:
                         _SESSION_OWNER[session_id] = uid
@@ -1316,6 +1319,13 @@ async def register_account_pb(
                             f"🔗 Sessão {session_id} associada ao user PB {uid}"
                         )
                         break
+                else:
+                    logger.warning(
+                        f"⚠️ user_token não encontrado em _USER_TOKENS — "
+                        f"_SESSION_OWNER[{session_id}] ficou vazio, webhook "
+                        f"forwarding não vai funcionar até o user chamar "
+                        f"qualquer endpoint autenticado e o backend recachear."
+                    )
         else:
             logger.error(
                 f"PB recusou registro de {phone}: {resp.status_code} {resp.text}"
