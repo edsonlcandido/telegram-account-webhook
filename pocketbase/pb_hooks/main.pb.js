@@ -73,6 +73,8 @@ onRecordAfterCreateSuccess((e) => {
   // Fazemos o trabalho de distribuir pros webhooks e atualizar o record
   // com o resultado. Se o save inicial falhar, esse hook não é chamado.
 
+  console.log("[hook] telegram_messages created:", e.record.id, "session:", e.record.getString("session"))
+
   const msg = e.record
   const sessionRel = msg.getString("session") // PB id do record da sessão
 
