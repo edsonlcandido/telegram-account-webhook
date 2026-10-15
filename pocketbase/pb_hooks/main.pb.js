@@ -128,14 +128,19 @@ onRecordAfterCreateSuccess((e) => {
     })
 
     // 4) POST pro webhook receptor
+    // PB 0.40+ JSVM: $http.send é SÍNCRONO. Se o container não conseguir
+    // resolver DNS ou conectar, trava até o timeout. O timeout: 10 (s)
+    // é pra leitura/escrita do socket, NÃO pra resolução DNS.
+    let resp
     try {
-      const resp = $http.send({
+      resp = $http.send({
         url: wh.getString("url"),
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
         timeout: 10,
       })
+      console.log("[hook] X send returned status=" + resp.status)
       delivered++
       console.log(
         "telegram_messages hook: delivered msg=" + msg.id +
