@@ -25,28 +25,10 @@ routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", true))
 // - $http.send bloqueia (síncrono). Timeout cobre socket I/O; DNS ruim
 //   pode adicionar overhead antes.
 // A skill `.agents/skills/pocketbase-jsvm/SKILL.md` tem mais detalhes.
-//
-// DECISÃO ARQUITETURAL — rewrite de URL pública → hostname Docker interno:
-// PB e n8n estão no mesmo Easypanel/projeto `eh-tudo`. O hostname público
-// do n8n (ehtudo-n8n.pfdgdz.easypanel.host ou eh-tudo-n8n.aiyfgd.easypanel.host)
-// resolve pra IPs diferentes, e em alguns casos (pfdgdz = 82.29.60.12, que NÃO
-// é o nosso Easypanel) a conexão via Traefik trava indefinidamente. O caminho
-// confiável é chamar pelo hostname interno Docker (http://n8n:5678) — mesma
-// network, HTTP puro, ~1ms. O usuário continua vendo a URL pública na UI.
-// Adicionar novos mapeamentos no INTERNAL_URL_MAP abaixo conforme criar
-// novos serviços no mesmo Easypanel.
 // =============================================================================
 
 onRecordAfterCreateSuccess((e) => {
   // O record JÁ foi salvo quando esse hook dispara.
-
-  // Mapeamento URL pública → hostname Docker interno. Inline (top-level
-  // const não é visível pra dentro do handler no PB 0.40+).
-  const INTERNAL_URL_MAP = {
-    "https://ehtudo-n8n.pfdgdz.easypanel.host": "http://n8n:5678",
-    "https://eh-tudo-n8n.aiyfgd.easypanel.host": "http://n8n:5678",
-    "https://n8n.ehtudo.app": "http://n8n:5678",
-  }
 
   const msg = e.record
   const sessionRel = msg.getString("session")
@@ -116,14 +98,13 @@ onRecordAfterCreateSuccess((e) => {
     }
     if (!pass) continue
 
-    // Reescreve URL pública → Docker interno (bypass Traefik)
-    let targetUrl = wh.getString("url")
-    for (const pub in INTERNAL_URL_MAP) {
-      if (targetUrl.indexOf(pub) === 0) {
-        targetUrl = INTERNAL_URL_MAP[pub] + targetUrl.substring(pub.length)
-        break
-      }
-    }
+    // URL é usada COMO ESTÁ — não fazemos rewrite. Se o usuário
+    // configurou uma URL pública, é essa URL que vai ser chamada.
+    // A investigação de por que dá certo esse container trava em
+    // certos IPs (rota/firewall/DNS) tá em aberto — não é resolvida
+    // com rewrite. Se for o caso, mover o forwarding pra outro
+    // serviço que tenha egress OK (FastAPI/Telethon service).
+    const targetUrl = wh.getString("url")
 
     // buildPayload (inline — não pode ser helper top-level)
     // TODO(schema): se o seu workflow n8n espera um shape específico tipo
@@ -154,8 +135,8 @@ onRecordAfterCreateSuccess((e) => {
     })
 
     // POST pro webhook. $http.send é síncrono, timeout em segundos, throws
-    // em erro. Se a URL interna (http://n8n:5678) bater certinho, retorna
-    // em <100ms. Se timeout/dns/route falhar, throws em até 10s.
+    // em erro. Se a URL bater certinho (Traefik → seu n8n), retorna em
+    // <500ms. Se timeout/dns/route falhar, throws em até 10s.
     try {
       const resp = $http.send({
         url: targetUrl,
