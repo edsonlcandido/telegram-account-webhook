@@ -400,23 +400,44 @@ async def _sender_username(event) -> str:
        API do Telegram. Funciona se o user já interagiu com a conta
        monitorada (Telethon tem access_hash em cache).
     """
-    # 1) Sender direto
+    sender_id = getattr(event, "sender_id", None)
+    is_private = getattr(event, "is_private", False)
     sender = getattr(event, "sender", None)
+    chat = getattr(event, "chat", None)
+
+    # 1) Sender direto
     if sender:
         u = getattr(sender, "username", None)
         if u:
             return u
+        # Log diagnóstico quando sender existe mas username=None
+        logger.info(
+            f"[sender_username] sender existe mas username=None; "
+            f"sender_id={sender_id}, is_private={is_private}, "
+            f"sender.first_name={getattr(sender, 'first_name', None)!r}, "
+            f"sender.last_name={getattr(sender, 'last_name', None)!r}, "
+            f"sender.__dict__.keys()={list(sender.__dict__.keys()) if hasattr(sender, '__dict__') else '?'}"
+        )
+    else:
+        logger.info(
+            f"[sender_username] event.sender=None; "
+            f"sender_id={sender_id}, is_private={is_private}"
+        )
 
     # 2) Em chat privado, chat É o user — checa essa fonte
-    if getattr(event, "is_private", False):
-        chat = getattr(event, "chat", None)
-        if chat:
-            u = getattr(chat, "username", None)
-            if u:
-                return u
+    if is_private and chat:
+        u = getattr(chat, "username", None)
+        if u:
+            return u
+        # Log diagnóstico
+        logger.info(
+            f"[sender_username] chat privado mas chat.username=None; "
+            f"chat_id={getattr(chat, 'id', None)}, "
+            f"chat.first_name={getattr(chat, 'first_name', None)!r}, "
+            f"chat.__dict__.keys()={list(chat.__dict__.keys()) if hasattr(chat, '__dict__') else '?'}"
+        )
 
     # 3) Fallback: busca via API do Telegram
-    sender_id = getattr(event, "sender_id", None)
     client = getattr(event, "client", None)
     if sender_id and client:
         try:
@@ -425,8 +446,14 @@ async def _sender_username(event) -> str:
                 u = getattr(full, "username", None)
                 if u:
                     return u
+                logger.info(
+                    f"[sender_username] get_entity OK mas username=None; "
+                    f"sender_id={sender_id}, "
+                    f"first_name={getattr(full, 'first_name', None)!r}, "
+                    f"__dict__.keys()={list(full.__dict__.keys()) if hasattr(full, '__dict__') else '?'}"
+                )
         except Exception as e:
-            logger.debug(f"sender_username fallback fetch falhou: {e}")
+            logger.info(f"sender_username fallback fetch falhou: {e}")
 
     return ""
 
@@ -705,7 +732,7 @@ def register_message_handler(client, session_id: str):
         # `handle_new_message`, no loop de webhooks (skip só do
         # POST, não do audit).
         await handle_new_message(event, session_id)
-    logger.debug(f"📨 Handler NewMessage registrado para {session_id}")
+    logger.info(f"📨 Handler NewMessage registrado para {session_id}")
 
 
 async def start_client(session_id: str, session_string: str, phone: str):
