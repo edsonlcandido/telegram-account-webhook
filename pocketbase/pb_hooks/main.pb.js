@@ -73,27 +73,26 @@ onRecordAfterCreateSuccess((e) => {
   // Fazemos o trabalho de distribuir pros webhooks e atualizar o record
   // com o resultado. Se o save inicial falhar, esse hook não é chamado.
 
-  // === DEBUG: log no início pra ver se hook sequer entra ===
-  console.log("=== HOOK START === record id=" + e.record.id)
-
+  // === DEBUG: cada etapa loga uma linha pra isolar onde trava ===
+  console.log("[hook] START id=" + e.record.id)
   const msg = e.record
-  const sessionRel = msg.getString("session") // PB id do record da sessão
+  const sessionRel = msg.getString("session")
+  console.log("[hook] sessionRel=" + sessionRel)
 
-  // 1) Acha a sessão (pra ter phone, name, etc no payload)
+  // 1) Acha a sessão
   let session
   try {
     session = $app.findRecordById("telegram_sessions", sessionRel)
+    console.log("[hook] session found, name=" + session.getString("name"))
   } catch (err) {
-    console.log("telegram_messages hook: sessão não encontrada:", sessionRel, err)
+    console.log("[hook] SESSION ERROR: " + String(err))
     return
   }
 
-  // 2) Lista webhooks ativos da sessão
-  // PB 0.40+ JSVM: findRecordsByFilter(collection, filter, sort, limit, offset, ...params)
-  // NÃO usar $app.findAllRecords({filter: ...}) (sintaxe antiga removida)
-  // NÃO usar $app.filter(...) (não existe)
+  // 2) Lista webhooks
   let webhooks
   try {
+    console.log("[hook] calling findRecordsByFilter")
     webhooks = $app.findRecordsByFilter(
       "telegram_webhooks",
       "session={:sid} && enabled=true",
@@ -102,8 +101,9 @@ onRecordAfterCreateSuccess((e) => {
       0,
       { sid: sessionRel },
     )
+    console.log("[hook] findRecordsByFilter OK, count=" + (webhooks ? webhooks.length : -1))
   } catch (err) {
-    console.log("telegram_messages hook: erro listando webhooks:", err)
+    console.log("[hook] FILTER ERROR: " + String(err))
     return
   }
 
