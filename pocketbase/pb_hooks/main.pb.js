@@ -73,6 +73,9 @@ onRecordAfterCreateSuccess((e) => {
   // Fazemos o trabalho de distribuir pros webhooks e atualizar o record
   // com o resultado. Se o save inicial falhar, esse hook não é chamado.
 
+  // === DEBUG: log no início pra ver se hook sequer entra ===
+  console.log("=== HOOK START === record id=" + e.record.id)
+
   const msg = e.record
   const sessionRel = msg.getString("session") // PB id do record da sessão
 
