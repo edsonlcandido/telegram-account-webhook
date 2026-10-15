@@ -256,6 +256,7 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
     "direction": "incoming",
     "sender_id": 987654321,
     "sender_name": "Fulano",
+    "sender_username": "fulanotelegram",
     "text": "oi, tudo bem?",
     "timestamp": "2026-10-15T11:00:00+00:00"
   }
@@ -265,6 +266,7 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
 **Campos importantes:**
 
 - `message.direction`: `"incoming"` (recebida) ou `"outgoing"` (enviada pela própria conta via Telegram app/desktop ou via nosso `/api/send-message`).
+- `message.sender_username`: `@username` do sender no Telegram **sem o `@`** (ex: `fulanotelegram`). Vem string vazia se o sender não tiver username configurado, ou se for um canal (canais não têm @username tradicional). Mais útil que `sender_name` pra identificar users em mensagens privadas — `sender_name` pode mudar se o user editar o perfil, `@username` é estável.
 - `message.timestamp`: ISO 8601 UTC (data da mensagem no Telegram).
 - `webhook_id` e `webhook_name`: identificação do webhook que recebeu o POST (útil quando o user tem vários webhooks na mesma sessão).
 

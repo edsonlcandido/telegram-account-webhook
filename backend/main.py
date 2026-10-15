@@ -382,6 +382,22 @@ def _sender_name(event) -> str | None:
     return full or None
 
 
+def _sender_username(event) -> str:
+    """@username do sender no Telegram (sem o @), ou string vazia.
+
+    Vem vazio se:
+    - Sender é um canal (canais usam channel username, não user)
+    - User não tem @username configurado
+    - event.sender ausente (msg anônima)
+    """
+    sender = getattr(event, "sender", None)
+    if not sender:
+        return ""
+    # O getter `username` em Telethon lida com a ausência, mas protege
+    # por garantia.
+    return getattr(sender, "username", None) or ""
+
+
 async def handle_new_message(event, session_id: str):
     """Handler que dispara quando chega nova mensagem.
 
@@ -449,6 +465,7 @@ async def handle_new_message(event, session_id: str):
 
         # 2) Extrai metadados da mensagem
         sender_name = _sender_name(event) or ""
+        sender_username = _sender_username(event)
         chat_title = _chat_title(event) or ""
         is_outgoing = bool(getattr(event, "outgoing", False))
         direction = "outgoing" if is_outgoing else "incoming"
@@ -535,6 +552,7 @@ async def handle_new_message(event, session_id: str):
                     "direction": direction,
                     "sender_id": event.sender_id,
                     "sender_name": sender_name,
+                    "sender_username": sender_username,
                     "text": text,
                     "timestamp": ts,
                 },
@@ -583,6 +601,7 @@ async def handle_new_message(event, session_id: str):
                         "direction": direction,
                         "sender_id": int(event.sender_id or 0),
                         "sender_name": sender_name,
+                        "sender_username": sender_username,
                         "text": text,
                     },
                     headers=headers,
