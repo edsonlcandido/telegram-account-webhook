@@ -458,6 +458,146 @@ async def _sender_username(event) -> str:
     return ""
 
 
+def _user_to_dict(user) -> dict | None:
+    """Extrai info pública de um Telethon User em dict limpo.
+
+    Não expõe access_hash (interno, sensível) nem campos binários
+    (photo). Todos os campos são opcionais — Telethon pode entregar
+    User object parcial se o cache tá frio.
+    """
+    if not user:
+        return None
+    return {
+        "id": getattr(user, "id", None),
+        "first_name": getattr(user, "first_name", None) or "",
+        "last_name": getattr(user, "last_name", None) or "",
+        "username": getattr(user, "username", None) or "",
+        "phone": getattr(user, "phone", None) or "",
+        "is_bot": bool(getattr(user, "bot", False)),
+        "is_verified": bool(getattr(user, "verified", False)),
+        "is_premium": bool(getattr(user, "premium", False)),
+        "is_scam": bool(getattr(user, "scam", False)),
+        "is_fake": bool(getattr(user, "fake", False)),
+        "is_contact": bool(getattr(user, "contact", False)),
+        "is_mutual_contact": bool(getattr(user, "mutual_contact", False)),
+        "lang_code": getattr(user, "lang_code", None) or "",
+    }
+
+
+def _classify_chat_type_from_entity(chat) -> str:
+    """Classifica o tipo de chat a partir da entidade (User/Chat/Channel)."""
+    # User → privado
+    if hasattr(chat, "first_name") and not hasattr(chat, "title"):
+        return "private"
+    # Channel (supergroup ou canal broadcast)
+    if hasattr(chat, "broadcast"):
+        if getattr(chat, "broadcast", False):
+            return "channel"
+        if getattr(chat, "megagroup", False):
+            return "supergroup"
+    # Chat (grupo legacy)
+    if hasattr(chat, "title"):
+        return "group"
+    return "unknown"
+
+
+def _chat_to_dict(chat) -> dict | None:
+    """Extrai info do chat (User/Chat/Channel) em dict limpo.
+
+    Funciona pros 3 tipos de entidade do Telethon:
+    - User (chat privado): tem first_name/last_name, NÃO tem title
+    - Chat (grupo legacy): tem title
+    - Channel (supergroup ou canal): tem title, megagroup, broadcast
+
+    `title` é resolvido com fallback: title → "Primeiro Último" (se for User)
+    """
+    if not chat:
+        return None
+
+    # Resolve um "title" sensato independente do tipo de entidade
+    title = getattr(chat, "title", None) or ""
+    if not title:
+        # Provavelmente é User (chat privado)
+        first = getattr(chat, "first_name", None) or ""
+        last = getattr(chat, "last_name", None) or ""
+        title = (f"{first} {last}").strip()
+
+    return {
+        "id": getattr(chat, "id", None),
+        "type": _classify_chat_type_from_entity(chat),
+        "title": title,
+        "username": getattr(chat, "username", None) or "",
+        "is_verified": bool(getattr(chat, "verified", False)),
+        "is_creator": bool(getattr(chat, "creator", False)),
+        "participants_count": getattr(chat, "participants_count", None),
+        "about": getattr(chat, "about", None) or "",
+        "has_protected_content": bool(getattr(chat, "has_protected_content", False)),
+    }
+
+
+async def _self_user_dict(event) -> dict | None:
+    """Info da própria conta Telegram que recebeu/mandou a mensagem.
+
+    `client.get_me()` é cacheado internamente pelo Telethon — chamadas
+    repetidas não fazem round-trip pro Telegram.
+    """
+    client = getattr(event, "client", None)
+    if not client:
+        return None
+    try:
+        me = await client.get_me()
+        return _user_to_dict(me)
+    except Exception as e:
+        logger.info(f"get_me() falhou: {e}")
+        return None
+
+
+async def _sender_full_dict(event) -> dict | None:
+    """User object completo do sender (com fallback assíncrono se preciso).
+
+    Retorna None se não for um user (canal/grupo, sem first_name).
+    """
+    sender = getattr(event, "sender", None)
+    if sender:
+        d = _user_to_dict(sender)
+        if d:
+            return d
+
+    # Fallback: get_entity
+    sender_id = getattr(event, "sender_id", None)
+    client = getattr(event, "client", None)
+    if sender_id and client:
+        try:
+            full = await client.get_entity(sender_id)
+            if full:
+                d = _user_to_dict(full)
+                if d:
+                    return d
+        except Exception as e:
+            logger.info(f"_sender_full_dict fallback fetch falhou: {e}")
+    return None
+
+
+async def _chat_full_dict(event) -> dict | None:
+    """Chat/receiver object completo (User, Chat ou Channel)."""
+    chat = getattr(event, "chat", None)
+    if chat:
+        d = _chat_to_dict(chat)
+        # Se for privado (User) e username vazio, tenta get_entity pra completar
+        if d and d.get("type") == "private" and not d.get("username"):
+            sender_id = getattr(event, "sender_id", None)
+            client = getattr(event, "client", None)
+            if sender_id and client:
+                try:
+                    full = await client.get_entity(sender_id)
+                    if full:
+                        d = _chat_to_dict(full)
+                except Exception:
+                    pass
+        return d
+    return None
+
+
 async def handle_new_message(event, session_id: str):
     """Handler que dispara quando chega nova mensagem.
 
@@ -533,6 +673,15 @@ async def handle_new_message(event, session_id: str):
         text = event.text or ""
         ts = event.date.isoformat() if getattr(event, "date", None) else ""
 
+        # 2b) Objetos Telethon enriquecidos (sender, chat, self).
+        # Para incoming: sender = outro user, chat = o lugar onde a msg chegou.
+        # Para outgoing: sender = self (nossa conta), chat = o destino.
+        # Tenta o cache primeiro; se username vier vazio em chat privado,
+        # _chat_full_dict faz fallback assíncrono via get_entity.
+        sender_full = await _sender_full_dict(event)
+        chat_full = await _chat_full_dict(event)
+        self_full = await _self_user_dict(event)
+
         # 3) Lista webhooks ativos da sessão
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
@@ -603,8 +752,12 @@ async def handle_new_message(event, session_id: str):
                     "session_id": session_id,
                     "phone": session_phone,
                     "name": session_name,
+                    "user": self_full,  # Info da nossa própria conta Telegram
                 },
+                "from": sender_full,  # Quem mandou (User object completo ou None)
+                "chat": chat_full,    # Onde a msg chegou (User/Chat/Channel object)
                 "message": {
+                    # Campos legados (mantidos pra não quebrar consumers existentes)
                     "id": event.id,
                     "chat_id": event.chat_id,
                     "chat_type": chat_type,
@@ -615,6 +768,9 @@ async def handle_new_message(event, session_id: str):
                     "sender_username": sender_username,
                     "text": text,
                     "timestamp": ts,
+                    "reply_to_msg_id": getattr(
+                        getattr(event, "reply_to", None) or {}, "reply_to_msg_id", None
+                    ) or getattr(getattr(event, "message", None) or {}, "reply_to_msg_id", None),
                 },
             }
 

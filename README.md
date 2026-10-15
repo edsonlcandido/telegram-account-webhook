@@ -246,7 +246,48 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
     "pb_id": "4ihcmc6a621sdij",
     "session_id": "account_5511932055173",
     "phone": "+5511932055173",
-    "name": "Vendas"
+    "name": "Vendas",
+    "user": {
+      "id": 5511932055173,
+      "first_name": "Edson",
+      "last_name": "Cândido",
+      "username": "edsonlcandido",
+      "phone": "+5511932055173",
+      "is_bot": false,
+      "is_verified": false,
+      "is_premium": true,
+      "is_scam": false,
+      "is_fake": false,
+      "is_contact": false,
+      "is_mutual_contact": false,
+      "lang_code": "pt-br"
+    }
+  },
+  "from": {
+    "id": 7892418175,
+    "first_name": "João",
+    "last_name": "Silva",
+    "username": "joaosilva",
+    "phone": "",
+    "is_bot": false,
+    "is_verified": false,
+    "is_premium": false,
+    "is_scam": false,
+    "is_fake": false,
+    "is_contact": false,
+    "is_mutual_contact": false,
+    "lang_code": "pt-br"
+  },
+  "chat": {
+    "id": 7892418175,
+    "type": "private",
+    "title": "João Silva",
+    "username": "joaosilva",
+    "is_verified": false,
+    "is_creator": false,
+    "participants_count": null,
+    "about": "",
+    "has_protected_content": false
   },
   "message": {
     "id": 51689,
@@ -258,17 +299,29 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
     "sender_name": "Fulano",
     "sender_username": "fulanotelegram",
     "text": "oi, tudo bem?",
-    "timestamp": "2026-10-15T11:00:00+00:00"
+    "timestamp": "2026-10-15T11:00:00+00:00",
+    "reply_to_msg_id": null
   }
 }
 ```
 
+**Estrutura de alto nível:**
+
+- **`event`**: `"telegram.message"` (reservado pra outros tipos no futuro).
+- **`webhook_id` / `webhook_name`**: identificação do webhook que recebeu (útil quando há vários webhooks na mesma sessão).
+- **`session`**: a conta Telegram que recebeu/mandou a mensagem. `session.user` é a própria conta (com `is_premium`, `username` etc).
+- **`from`**: quem mandou a mensagem (User object completo do Telethon). Vem `null` se for mensagem de canal (sender é o canal, não user). Pra outgoing messages, `from` = a própria conta (igual a `session.user`).
+- **`chat`**: onde a mensagem foi mandada — User (privado), Group/Supergroup, ou Channel. Tem `type`, `title`, `username`, `participants_count` (grupo), `about` (descrição do grupo), `has_protected_content`, `is_verified`, `is_creator`.
+- **`message`**: a mensagem em si. Mantém os campos legados (`chat_id`, `sender_id`, `sender_name`, etc) pra não quebrar consumers existentes; adiciona `reply_to_msg_id` no fim.
+
 **Campos importantes:**
 
 - `message.direction`: `"incoming"` (recebida) ou `"outgoing"` (enviada pela própria conta via Telegram app/desktop ou via nosso `/api/send-message`).
-- `message.sender_username`: `@username` do sender no Telegram **sem o `@`** (ex: `fulanotelegram`). Vem string vazia se o sender não tiver username configurado, ou se for um canal (canais não têm @username tradicional). Mais útil que `sender_name` pra identificar users em mensagens privadas — `sender_name` pode mudar se o user editar o perfil, `@username` é estável.
+- `message.sender_username` / `from.username`: `@username` do sender no Telegram **sem o `@`** (ex: `fulanotelegram`). Vem string vazia se o sender não tiver username configurado, ou se for um canal. Mais útil que `sender_name` pra identificar users em mensagens privadas — `sender_name` pode mudar se o user editar o perfil, `@username` é estável.
+- `from.is_premium` / `chat.is_verified`: badges do Telegram úteis pra ranking/filtros.
 - `message.timestamp`: ISO 8601 UTC (data da mensagem no Telegram).
-- `webhook_id` e `webhook_name`: identificação do webhook que recebeu o POST (útil quando o user tem vários webhooks na mesma sessão).
+- `message.reply_to_msg_id`: id da mensagem à qual esta é uma reply (`null` se não for reply).
+- `chat.participants_count`: count de membros do grupo/canal. `null` em chat privado.
 
 **Anti-loop:** o handler suprime forwarding (mas NÃO o audit log em `telegram_messages`) pra mensagens que a própria API enviou via `/api/send-message` nos últimos 10s, evitando loop com o receptor do webhook (ex: n8n respondendo às nossas mensagens).
 
