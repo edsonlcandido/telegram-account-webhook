@@ -30,14 +30,32 @@ import httpx
 API_ID = int(os.getenv("TG_API_ID", "0"))
 API_HASH = os.getenv("TG_API_HASH", "")
 POCKETBASE_URL = os.getenv("POCKETBASE_URL", "http://localhost:8090")
-# Service token do PB: JWT de um user dedicado (criar no PB admin UI, ex:
-# service@telegram-webhook.local). Usado nas chamadas internas ao PB
-# que rodam SEM request HTTP no contexto (handler de mensagem do
-# Telethon, jobs em background) — não dá pra repassar o token do user
-# porque esses fluxos não têm user. Sem o service token, o PB rejeita
-# com 401 e `_get_active_webhooks` retorna [], silenciosamente
-# impedindo o webhook forwarding de funcionar.
-POCKETBASE_SERVICE_TOKEN = os.getenv("POCKETBASE_SERVICE_TOKEN", "")
+# =============================================================================
+# Service token do PB — autenticação ÚNICA usada por todos os fluxos em
+# background (handler do Telethon, jobs em background, qualquer chamada
+# ao PB que não tenha request HTTP no contexto).
+#
+# Por que: chamadas internas ao PB exigem auth (a collection
+# `telegram_messages` tem createRule "@request.auth.id != ''"), e
+# repassar o token do user nesses fluxos é frágil (cache que esvazia
+# em restart, token que expira, race entre login e primeira mensagem).
+#
+# Origem do token (em ordem de preferência):
+#   1) POCKETBASE_SERVICE_TOKEN env var com JWT pronto (mais simples, sem
+#      senha em env). Gerar uma vez no admin UI do PB e colar aqui.
+#   2) POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD — login automático
+#      via `/_superusers/auth-with-password` no startup do container.
+#
+# Tokens de superuser são long-lived (default 14 dias, renovável) — pra
+# ambiente de produção vale gerar um JWT dedicado via opção 1 e esquecer.
+# =============================================================================
+POCKETBASE_SERVICE_TOKEN_ENV = os.getenv("POCKETBASE_SERVICE_TOKEN", "")
+POCKETBASE_ADMIN_EMAIL = os.getenv("POCKETBASE_ADMIN_EMAIL", "")
+POCKETBASE_ADMIN_PASSWORD = os.getenv("POCKETBASE_ADMIN_PASSWORD", "")
+# Cache do token em memória. Populado pelo lifespan startup, refresh em
+# background task se 401.
+_PB_SERVICE_TOKEN: Optional[str] = None
+
 SESSIONS_DIR = Path("/app/sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
 
@@ -46,6 +64,91 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# PB Service Token — auth ÚNICA pra fluxos internos (handler Telethon)
+# =============================================================================
+# Por que: handler do Telethon roda em background sem request HTTP, então
+# não tem user JWT pra repassar. Antes a gente tentava cachear o token
+# do user dono da sessão em `_USER_TOKENS[user_id]`, mas o cache esvaziava
+# em restart, em deploy, ou em qualquer janela onde o user ainda não
+# tinha chamado endpoint autenticado desde o boot. A mensagem chegava,
+# cache miss, handler DROP a mensagem com warning.
+#
+# Agora: UMA conta admin do PB (superuser) usada exclusivamente pra
+# chamadas internas. Token cacheado em `_PB_SERVICE_TOKEN`, populado no
+# lifespan startup, re-autenticado em background se 401.
+
+async def _obtain_pb_service_token() -> str:
+    """Obtém o service token (uma vez, cacheado em `_PB_SERVICE_TOKEN`).
+
+    Estratégia:
+    1) Se POCKETBASE_SERVICE_TOKEN (env) já tá populado, usa direto.
+       JWT dedicado, sem senha em env. Gerar uma vez no admin UI.
+    2) Senão, se POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD tão
+       setados, login via /_superusers/auth-with-password.
+    3) Senão, falha com mensagem clara.
+    """
+    if POCKETBASE_SERVICE_TOKEN_ENV:
+        logger.info("🔑 PB service token: usando POCKETBASE_SERVICE_TOKEN do env")
+        return POCKETBASE_SERVICE_TOKEN_ENV
+
+    if not POCKETBASE_ADMIN_EMAIL or not POCKETBASE_ADMIN_PASSWORD:
+        raise RuntimeError(
+            "PB admin não configurado. Defina POCKETBASE_SERVICE_TOKEN (JWT) "
+            "OU POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD no env do "
+            "serviço telegram-account-webhook-telegram."
+        )
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(
+            f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
+            json={
+                "identity": POCKETBASE_ADMIN_EMAIL,
+                "password": POCKETBASE_ADMIN_PASSWORD,
+            },
+        )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"PB admin login falhou: {r.status_code} "
+            f"{r.text[:200]} (verifique POCKETBASE_ADMIN_EMAIL/PASSWORD)"
+        )
+    token = r.json().get("token")
+    if not token:
+        raise RuntimeError(f"PB admin login não retornou token: {r.text[:200]}")
+    logger.info(
+        f"🔑 PB service token: login como {POCKETBASE_ADMIN_EMAIL} OK "
+        f"(expira em {r.json().get('token', {}).get('exp')})"
+        if isinstance(r.json().get("token"), dict)
+        else f"🔑 PB service token: login como {POCKETBASE_ADMIN_EMAIL} OK"
+    )
+    return token
+
+
+async def _ensure_pb_service_token() -> str:
+    """Garante `_PB_SERVICE_TOKEN` populado (lazy + cached)."""
+    global _PB_SERVICE_TOKEN
+    if _PB_SERVICE_TOKEN:
+        return _PB_SERVICE_TOKEN
+    _PB_SERVICE_TOKEN = await _obtain_pb_service_token()
+    return _PB_SERVICE_TOKEN
+
+
+def pb_service_headers() -> dict:
+    """Header pronto pra chamadas internas ao PB (Telethon handler etc).
+
+    Raises se o token não tiver sido inicializado — nesse caso o caller
+    deve chamar `_ensure_pb_service_token()` antes (normalmente já foi
+    feito no lifespan startup).
+    """
+    if not _PB_SERVICE_TOKEN:
+        raise RuntimeError(
+            "_PB_SERVICE_TOKEN não inicializado. Chame _ensure_pb_service_token() "
+            "antes (lifespan startup deve ter feito isso)."
+        )
+    return {"Authorization": _PB_SERVICE_TOKEN}
+
 
 # Armazenamento em memória: session_id -> TelegramClient
 active_clients: Dict[str, TelegramClient] = {}
@@ -162,19 +265,12 @@ def delete_session_file(session_id: str):
 # onRecordAfterCreate em pb_hooks/main.pb.js (roda DENTRO do PB, sem auth,
 # sem propagação de token). O FastAPI só insere o record da mensagem.
 #
-# Caches necessários (todos populados em runtime):
-# - _SESSION_OWNER[session_id] = pb_user_id  → qual user "dono" da sessão
-# - _USER_TOKENS[pb_user_id] = user_token    → JWT do user pra fazer INSERT
-# - _SESSION_PB_ID[session_id] = pb_record_id → record id do PB (pra relation)
-#
-# _SESSION_OWNER é populado no register_account_pb (background task do
-# verify_code). _USER_TOKENS é populado em verify_pb_auth. _SESSION_PB_ID
-# é populado no register_account_pb também. Se uma sessão for criada
-# antes desse deploy, o cache vai estar vazio e o handler não consegue
-# inserir — aí o user precisa re-adicionar via signup (que re-popula).
-_SESSION_OWNER: Dict[str, str] = {}  # session_id -> pb_user_id
-_USER_TOKENS: Dict[str, str] = {}  # pb_user_id -> user_token
-_SESSION_PB_ID: Dict[str, str] = {}  # session_id -> pb_record_id
+# O FastAPI usa UM único service token (_PB_SERVICE_TOKEN, cacheado no
+# lifespan startup) pra TODAS as chamadas internas ao PB — não cacheia
+# token por user, não cacheia pb_id por sessão, não tenta descobrir
+# "dono" da sessão. Se o token do user não bate, é problema do user
+# (não do Telethon). O Telethon recebe a msg, manda pro PB com o
+# service token, e esquece. PB cuida do resto.
 
 
 def _classify_chat_type(event) -> str:
@@ -210,10 +306,14 @@ def _sender_name(event) -> str | None:
 async def handle_new_message(event, session_id: str):
     """Handler que dispara quando chega nova mensagem.
 
-    Comportamento novo (a partir desse refactor): só faz INSERT em
-    `telegram_messages` no PB. O hook do PB cuida de listar webhooks
-    ativos, aplicar filtros, e fazer POST em cada um. Sem auth propagation
-    problema, sem cache envenenado, sem race condition.
+    Fluxo simplificado:
+    1) Garante service token do PB disponível.
+    2) Acha o pb_id da sessão via query por filter (1 GET, ~1ms).
+    3) INSERT em `telegram_messages`. O hook do PB cuida do resto.
+
+    Não cacheia nada em memória. Não depende de nenhum user ter
+    chamado endpoint autenticado desde o boot. Sessões criadas antes
+    do deploy funcionam igual. Restart do container não zera nada.
     """
     try:
         logger.info(
@@ -231,41 +331,33 @@ async def handle_new_message(event, session_id: str):
         if _is_recently_sent(event.id):
             return
 
-        # Acha o token PB do user dono da sessão
-        owner_id = _SESSION_OWNER.get(session_id)
-        user_token = _USER_TOKENS.get(owner_id) if owner_id else None
-        pb_session_id = _SESSION_PB_ID.get(session_id)
+        # Garante que o service token tá disponível. lifespan startup já
+        # fez isso, mas se o token expirou entre o boot e agora, re-auth.
+        await _ensure_pb_service_token()
+        headers = pb_service_headers()
 
-        # Fallback: se o cache não tem, busca no PB (1 chamada extra).
-        # Caso comum: sessão criada antes desse deploy ou container
-        # reiniciou e o cache em memória zerou.
-        if (not user_token) or (not pb_session_id):
-            if not user_token:
-                logger.warning(
-                    f"⚠️ Sem token PB pra sessão {session_id} (_SESSION_OWNER="
-                    f"{owner_id!r}, _USER_TOKENS tem esse user? "
-                    f"{bool(user_token)}). Ignorando mensagem."
-                )
-                return
-            # pb_session_id ausente — busca
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    r = await client.get(
-                        f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-                        params={"filter": f'session_id="{session_id}"', "perPage": 1},
-                        headers={"Authorization": user_token},
-                    )
-                items = r.json().get("items", [])
-                if not items:
-                    logger.warning(
-                        f"⚠️ Sessão {session_id} não existe no PB — ignorando msg"
-                    )
-                    return
-                pb_session_id = items[0]["id"]
-                _SESSION_PB_ID[session_id] = pb_session_id
-            except Exception as e:
-                logger.error(f"Erro buscando pb_id da sessão: {e}")
-                return
+        # Acha o pb_id da sessão (1 GET por mensagem, ~1ms na rede interna)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={"filter": f'session_id="{session_id}"', "perPage": 1},
+                headers=headers,
+            )
+        if r.status_code != 200:
+            logger.error(
+                f"PB recusou lookup de sessão {session_id}: "
+                f"{r.status_code} {r.text[:200]}"
+            )
+            return
+        items = r.json().get("items", [])
+        if not items:
+            logger.warning(
+                f"⚠️ Sessão {session_id} não existe no PB — ignorando msg "
+                f"(provavelmente foi deletada mas o Telethon client ainda tá "
+                f"rodando com sessão antiga)"
+            )
+            return
+        pb_session_id = items[0]["id"]
 
         # Monta o record mínimo (hook do PB lê o record e processa)
         sender_name = _sender_name(event)
@@ -288,7 +380,7 @@ async def handle_new_message(event, session_id: str):
                 r = await client.post(
                     f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
                     json=msg_data,
-                    headers={"Authorization": user_token},
+                    headers=headers,
                 )
             if r.status_code >= 300:
                 logger.warning(
@@ -415,11 +507,20 @@ async def initialize_sessions():
 async def lifespan(app: FastAPI):
     logger.info("🚀 FastAPI Starting...")
 
-    # Valida credenciais
+    # Valida credenciais Telegram
     if API_ID == 0 or not API_HASH:
         logger.warning("⚠️ TG_API_ID ou TG_API_HASH não configurados!")
 
-    # Inicializa sessões
+    # Obtém o service token do PB. Sem isso, o handler do Telethon não
+    # consegue inserir em `telegram_messages` (createRule exige auth).
+    # Se falhar aqui, NÃO inicia o app — crash loud.
+    try:
+        await _ensure_pb_service_token()
+    except Exception as e:
+        logger.error(f"❌ Falha ao obter PB service token: {e}")
+        raise
+
+    # Inicializa sessões Telethon
     await initialize_sessions()
 
     yield
@@ -511,13 +612,6 @@ async def verify_pb_auth(authorization: str | None = Header(default=None)) -> di
         except Exception as e:
             logger.error(f"Falha ao validar token PB: {e}")
             raise HTTPException(503, "Serviço de autenticação indisponível")
-
-    # Popula _USER_TOKENS (cache de "qual JWT usar pra falar com o PB
-    # em nome deste user"). Usado pelo _get_active_webhooks em background
-    # tasks (handler do Telethon) que não têm request HTTP no contexto.
-    user_id = user.get("id", "")
-    if user_id and token:
-        _USER_TOKENS[user_id] = token
 
     return user
 
@@ -1058,12 +1152,6 @@ async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth))
     # Remove arquivo
     delete_session_file(session_id)
 
-    # Invalida cache de webhooks dessa sessão
-    pass  # invalidate removed (hook do PB faz cache via SQL)
-
-    # Remove associação session_id -> user_id
-    _SESSION_OWNER.pop(session_id, None)
-
     return {"success": True}
 
 
@@ -1127,36 +1215,6 @@ async def register_account_pb(
                 )
         if 200 <= resp.status_code < 300:
             logger.info(f"📝 Conta registrada no PocketBase: {phone}")
-            # Cacheia a associação session_id -> pb_user_id. O handler do
-            # Telethon (que roda em background) consulta _SESSION_OWNER
-            # pra saber qual token do PB usar pra inserir em
-            # telegram_messages (o hook do PB cuida do resto).
-            if user_token:
-                # Procura qual user_id tem esse token no cache. O cache
-                # _USER_TOKENS é {user_id -> token}, populado em
-                # verify_pb_auth. NÃO comparar com `in` (checaria se é
-                # CHAVE do dict, não valor — sempre False).
-                for uid, tok in _USER_TOKENS.items():
-                    if tok == user_token:
-                        _SESSION_OWNER[session_id] = uid
-                        logger.info(
-                            f"🔗 Sessão {session_id} associada ao user PB {uid}"
-                        )
-                        break
-                else:
-                    logger.warning(
-                        f"⚠️ user_token não encontrado em _USER_TOKENS — "
-                        f"_SESSION_OWNER[{session_id}] ficou vazio, webhook "
-                        f"forwarding não vai funcionar até o user chamar "
-                        f"qualquer endpoint autenticado e o backend recachear."
-                    )
-            # Cacheia o record id do PB pra relation no INSERT de mensagens
-            try:
-                resp_json = resp.json()
-                if resp_json.get("id"):
-                    _SESSION_PB_ID[session_id] = resp_json["id"]
-            except Exception:
-                pass
         else:
             logger.error(
                 f"PB recusou registro de {phone}: {resp.status_code} {resp.text}"
