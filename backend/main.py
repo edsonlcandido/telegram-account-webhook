@@ -306,14 +306,20 @@ def _sender_name(event) -> str | None:
 async def handle_new_message(event, session_id: str):
     """Handler que dispara quando chega nova mensagem.
 
-    Fluxo simplificado:
-    1) Garante service token do PB disponível.
-    2) Acha o pb_id da sessão via query por filter (1 GET, ~1ms).
-    3) INSERT em `telegram_messages`. O hook do PB cuida do resto.
+    Fluxo (refactor — Telethon service faz o forwarding direto):
+    1) Garante service token do PB (cacheado no lifespan startup).
+    2) Acha o pb_id da sessão (1 GET).
+    3) Lista webhooks ativos dessa sessão (1 GET, com filter).
+    4) Aplica filtros (direction, chat_type, text_match).
+    5) POST em cada webhook que passar — httpx com timeout 10s.
+    6) INSERT em `telegram_messages` (audit log; hook do PB é no-op).
 
-    Não cacheia nada em memória. Não depende de nenhum user ter
-    chamado endpoint autenticado desde o boot. Sessões criadas antes
-    do deploy funcionam igual. Restart do container não zera nada.
+    Por que FastAPI faz forwarding e não o hook do PB:
+    O container do PB pode não ter egress liberado pra certos IPs
+    externos (Easypanel network ACL). Telethon service JÁ tem egress
+    OK — fala com Telegram API, com PB, e tem Python httpx com
+    timeout/error handling limpos. Antes não era possível porque o
+    service token não existia — agora existe (ver `_PB_SERVICE_TOKEN`).
     """
     try:
         logger.info(
@@ -331,12 +337,11 @@ async def handle_new_message(event, session_id: str):
         if _is_recently_sent(event.id):
             return
 
-        # Garante que o service token tá disponível. lifespan startup já
-        # fez isso, mas se o token expirou entre o boot e agora, re-auth.
+        # Service token (cacheado no lifespan, re-auth se expirado)
         await _ensure_pb_service_token()
         headers = pb_service_headers()
 
-        # Acha o pb_id da sessão (1 GET por mensagem, ~1ms na rede interna)
+        # 1) Lookup da sessão
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
@@ -357,42 +362,148 @@ async def handle_new_message(event, session_id: str):
                 f"rodando com sessão antiga)"
             )
             return
-        pb_session_id = items[0]["id"]
+        session = items[0]
+        pb_session_id = session["id"]
+        session_phone = session.get("phone", "")
+        session_name = session.get("name", "")
 
-        # Monta o record mínimo (hook do PB lê o record e processa)
-        sender_name = _sender_name(event)
-        chat_title = _chat_title(event)
+        # 2) Extrai metadados da mensagem
+        sender_name = _sender_name(event) or ""
+        chat_title = _chat_title(event) or ""
         is_outgoing = bool(getattr(event, "outgoing", False))
-        msg_data = {
-            "session": pb_session_id,
-            "chat_id": int(event.chat_id) if event.chat_id is not None else 0,
-            "chat_type": _classify_chat_type(event),
-            "chat_title": chat_title or "",
-            "direction": "outgoing" if is_outgoing else "incoming",
-            "sender_id": int(event.sender_id) if event.sender_id is not None else 0,
-            "sender_name": sender_name or "",
-            "text": event.text or "",
-        }
+        direction = "outgoing" if is_outgoing else "incoming"
+        chat_type = _classify_chat_type(event)
+        text = event.text or ""
+        ts = event.date.isoformat() if getattr(event, "date", None) else ""
 
-        # INSERT no PB → hook onRecordAfterCreate dispara automaticamente
+        # 3) Lista webhooks ativos da sessão
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+                params={
+                    "filter": f'session="{pb_session_id}" && enabled=true',
+                    "perPage": 500,
+                },
+                headers=headers,
+            )
+        if r.status_code != 200:
+            logger.error(
+                f"PB recusou listagem de webhooks: {r.status_code} {r.text[:200]}"
+            )
+            # Não retorna — INSERT de audit pode continuar
+            webhooks = []
+        else:
+            webhooks = r.json().get("items", [])
+
+        # 5) Filtra e distribui
+        delivered = 0
+        failed = 0
+        for wh in webhooks:
+            if not wh:
+                continue
+
+            # Filtro de direction
+            fdir = wh.get("filter_direction") or "all"
+            if fdir != "all" and fdir != direction:
+                continue
+
+            # Filtro de chat_type
+            fct = wh.get("filter_chat_type") or "all"
+            if fct != "all" and fct != chat_type:
+                continue
+
+            # Filtro de text_match
+            op = wh.get("filter_text_match_operator") or "none"
+            if op != "none":
+                val = (wh.get("filter_text_match_value") or "").strip()
+                if val:
+                    needle = val.lower()
+                    haystack = text.lower()
+                    if op == "equals" and haystack != needle:
+                        continue
+                    if op == "contains" and needle not in haystack:
+                        continue
+
+            url = wh.get("url")
+            if not url:
+                continue
+
+            payload = {
+                "event": "telegram.message",
+                "webhook_id": wh.get("id"),
+                "webhook_name": wh.get("name"),
+                "session": {
+                    "pb_id": pb_session_id,
+                    "session_id": session_id,
+                    "phone": session_phone,
+                    "name": session_name,
+                },
+                "message": {
+                    "id": event.id,
+                    "chat_id": event.chat_id,
+                    "chat_type": chat_type,
+                    "chat_title": chat_title,
+                    "direction": direction,
+                    "sender_id": event.sender_id,
+                    "sender_name": sender_name,
+                    "text": text,
+                    "timestamp": ts,
+                },
+            }
+
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url, json=payload)
+                if 200 <= resp.status_code < 300:
+                    delivered += 1
+                    logger.info(
+                        f"✅ webhook delivered msg={event.id} "
+                        f"wh={wh.get('id')} status={resp.status_code}"
+                    )
+                else:
+                    failed += 1
+                    logger.warning(
+                        f"⚠️ webhook non-2xx msg={event.id} "
+                        f"wh={wh.get('id')} status={resp.status_code} "
+                        f"body={resp.text[:200]}"
+                    )
+            except Exception as e:
+                failed += 1
+                logger.warning(
+                    f"⚠️ webhook FAILED msg={event.id} "
+                    f"wh={wh.get('id')} url={url} "
+                    f"err={str(e)[:200]}"
+                )
+
+        logger.info(
+            f"📨 Msg #{event.id} (sessão {session_id}): "
+            f"webhooks={len(webhooks)} delivered={delivered} failed={failed}"
+        )
+
+        # 6) INSERT em telegram_messages (audit log). Hook do PB é no-op
+        # então não dispara forwarding duplicado.
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 r = await client.post(
                     f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
-                    json=msg_data,
+                    json={
+                        "session": pb_session_id,
+                        "chat_id": int(event.chat_id or 0),
+                        "chat_type": chat_type,
+                        "chat_title": chat_title,
+                        "direction": direction,
+                        "sender_id": int(event.sender_id or 0),
+                        "sender_name": sender_name,
+                        "text": text,
+                    },
                     headers=headers,
                 )
             if r.status_code >= 300:
                 logger.warning(
-                    f"PB recusou INSERT msg: {r.status_code} {r.text[:200]}"
-                )
-            else:
-                logger.info(
-                    f"📨 Msg #{event.id} inserida em telegram_messages (sessão "
-                    f"{session_id}); hook do PB vai distribuir pros webhooks"
+                    f"PB recusou INSERT audit msg: {r.status_code} {r.text[:200]}"
                 )
         except Exception as e:
-            logger.error(f"Erro fazendo INSERT de msg no PB: {e}")
+            logger.error(f"Erro fazendo INSERT audit de msg no PB: {e}")
 
     except Exception as e:
         logger.error(f"Erro ao processar mensagem: {e}")
