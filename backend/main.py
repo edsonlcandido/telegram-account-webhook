@@ -663,24 +663,39 @@ async def handle_new_message(event, session_id: str):
         session_phone = session.get("phone", "")
         session_name = session.get("name", "")
 
+        # 2b) Objetos Telethon enriquecidos (sender, chat, self).
+        # Tira `self_full` ANTES do direction check pq ele é usado no fallback
+        # de is_outgoing (ver abaixo).
+        sender_full = await _sender_full_dict(event)
+        chat_full = await _chat_full_dict(event)
+        self_full = await _self_user_dict(event)
+
         # 2) Extrai metadados da mensagem
         sender_name = _sender_name(event) or ""
         sender_username = await _sender_username(event)
         chat_title = _chat_title(event) or ""
-        is_outgoing = bool(getattr(event, "outgoing", False))
+
+        # Detecção de direction COM FALLBACK.
+        # O `event.outgoing` do Telethon falha em alguns cenários:
+        # - Mensagem enviada pelo user via Telegram app/desktop (outro
+        #   client) — Telethon recebe como notification, `outgoing` é False
+        #   mas `from_id` é o nosso próprio user_id
+        # - Sincronização de mensagens históricas
+        # - Echo de mensagem recém-enviada
+        # Fallback: se `from.id == session.user.id`, é outgoing.
+        is_outgoing_telethon = bool(getattr(event, "outgoing", False))
+        self_id = (self_full or {}).get("id")
+        is_outgoing_self = bool(
+            self_id is not None
+            and event.sender_id is not None
+            and int(event.sender_id) == int(self_id)
+        )
+        is_outgoing = is_outgoing_telethon or is_outgoing_self
         direction = "outgoing" if is_outgoing else "incoming"
+
         chat_type = _classify_chat_type(event)
         text = event.text or ""
         ts = event.date.isoformat() if getattr(event, "date", None) else ""
-
-        # 2b) Objetos Telethon enriquecidos (sender, chat, self).
-        # Para incoming: sender = outro user, chat = o lugar onde a msg chegou.
-        # Para outgoing: sender = self (nossa conta), chat = o destino.
-        # Tenta o cache primeiro; se username vier vazio em chat privado,
-        # _chat_full_dict faz fallback assíncrono via get_entity.
-        sender_full = await _sender_full_dict(event)
-        chat_full = await _chat_full_dict(event)
-        self_full = await _self_user_dict(event)
 
         # 3) Lista webhooks ativos da sessão
         async with httpx.AsyncClient(timeout=10.0) as client:
