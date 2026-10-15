@@ -13,27 +13,48 @@ routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", true))
 // Tudo roda DENTRO do PB — sem auth, sem HTTP hop extra pro FastAPI, sem
 // problemas de propagação de token.
 //
-// GOTCHA: o PB 0.40+ JSVM não enxerga funções helper top-level dentro
-// de handlers. `matchesFilters` e `buildPayload` PRECISAM estar inline
-// (declaradas dentro do corpo do hook), senão dá "ReferenceError: X is
-// not defined" no runtime. A skill pocketbase-jsvm tem mais detalhes.
+// GOTCHA PB 0.40+ JSVM (relembrando pq eu já quebrei isso 3x):
+// - Funções helper top-level NÃO são visíveis dentro de handlers. Tudo
+//   precisa estar inline (declarado dentro do corpo do hook) senão dá
+//   "ReferenceError: X is not defined" no runtime.
+// - $http.send retorna `res.statusCode` (NÃO `res.status` — esse campo
+//   não existe, é silenciosamente undefined).
+// - Hooks *AfterSuccess rodam DEPOIS do save. Se o hook lançar, o record
+//   fica persistido mas a response pro cliente vira erro. NÃO chamar
+//   e.next() (no-op ou erro em AfterSuccess).
+// - $http.send bloqueia (síncrono). Timeout cobre socket I/O; DNS ruim
+//   pode adicionar overhead antes.
+// A skill `.agents/skills/pocketbase-jsvm/SKILL.md` tem mais detalhes.
+//
+// DECISÃO ARQUITETURAL — rewrite de URL pública → hostname Docker interno:
+// PB e n8n estão no mesmo Easypanel/projeto `eh-tudo`. O hostname público
+// do n8n (ehtudo-n8n.pfdgdz.easypanel.host ou eh-tudo-n8n.aiyfgd.easypanel.host)
+// resolve pra IPs diferentes, e em alguns casos (pfdgdz = 82.29.60.12, que NÃO
+// é o nosso Easypanel) a conexão via Traefik trava indefinidamente. O caminho
+// confiável é chamar pelo hostname interno Docker (http://n8n:5678) — mesma
+// network, HTTP puro, ~1ms. O usuário continua vendo a URL pública na UI.
+// Adicionar novos mapeamentos no INTERNAL_URL_MAP abaixo conforme criar
+// novos serviços no mesmo Easypanel.
 // =============================================================================
 
 onRecordAfterCreateSuccess((e) => {
-  // O record JÁ foi salvo quando esse hook dispara (é "AfterSuccess").
-  // Fazemos o trabalho de distribuir pros webhooks. Se o save inicial
-  // falhar, esse hook não é chamado.
+  // O record JÁ foi salvo quando esse hook dispara.
 
-  console.log("[hook] X START record.id=" + e.record.id)
+  // Mapeamento URL pública → hostname Docker interno. Inline (top-level
+  // const não é visível pra dentro do handler no PB 0.40+).
+  const INTERNAL_URL_MAP = {
+    "https://ehtudo-n8n.pfdgdz.easypanel.host": "http://n8n:5678",
+    "https://eh-tudo-n8n.aiyfgd.easypanel.host": "http://n8n:5678",
+    "https://n8n.ehtudo.app": "http://n8n:5678",
+  }
+
   const msg = e.record
   const sessionRel = msg.getString("session")
-  console.log("[hook] X sessionRel=" + sessionRel)
 
   // 1) Acha a sessão
   let session
   try {
     session = $app.findRecordById("telegram_sessions", sessionRel)
-    console.log("[hook] X session found")
   } catch (err) {
     console.log("telegram_messages hook: sessão não encontrada:", String(err))
     return
@@ -50,14 +71,12 @@ onRecordAfterCreateSuccess((e) => {
       0,
       { sid: sessionRel },
     )
-    console.log("[hook] X webhooks found count=" + (webhooks ? webhooks.length : -1))
   } catch (err) {
     console.log("telegram_messages hook: erro listando webhooks:", String(err))
     return
   }
 
   if (!webhooks || webhooks.length === 0) {
-    console.log("telegram_messages hook: nenhum webhook ativo pra sessão", sessionRel)
     return
   }
 
@@ -68,22 +87,19 @@ onRecordAfterCreateSuccess((e) => {
     const wh = webhooks[i]
     if (!wh) continue
 
-    // === INLINE: matchesFilters (não pode ser helper top-level) ===
+    // matchesFilters (inline — não pode ser helper top-level)
     let pass = true
     try {
       const dir = wh.getString("filter_direction") || "all"
-      console.log("[hook] X dir=" + dir)
       if (dir !== "all" && dir !== msg.getString("direction")) pass = false
 
       if (pass) {
         const ct = wh.getString("filter_chat_type") || "all"
-        console.log("[hook] X ct=" + ct)
         if (ct !== "all" && ct !== msg.getString("chat_type")) pass = false
       }
 
       if (pass) {
         const op = wh.getString("filter_text_match_operator") || "none"
-        console.log("[hook] X op=" + op)
         if (op !== "none") {
           const val = (wh.getString("filter_text_match_value") || "").trim()
           if (val) {
@@ -94,16 +110,26 @@ onRecordAfterCreateSuccess((e) => {
           }
         }
       }
-      console.log("[hook] X pass=" + pass)
     } catch (fErr) {
       console.log("telegram_messages hook: filter error:", String(fErr))
       continue
     }
     if (!pass) continue
 
-    console.log("[hook] X calling $http.send to " + wh.getString("url"))
+    // Reescreve URL pública → Docker interno (bypass Traefik)
+    let targetUrl = wh.getString("url")
+    for (const pub in INTERNAL_URL_MAP) {
+      if (targetUrl.indexOf(pub) === 0) {
+        targetUrl = INTERNAL_URL_MAP[pub] + targetUrl.substring(pub.length)
+        break
+      }
+    }
 
-    // === INLINE: buildPayload (não pode ser helper top-level) ===
+    // buildPayload (inline — não pode ser helper top-level)
+    // TODO(schema): se o seu workflow n8n espera um shape específico tipo
+    // {objeto: {prop, nume, sub: {name}}}, ajustar este objeto. O schema
+    // atual funciona como genérico — webhook nodes n8n costumam aceitar
+    // JSON arbitrário se não tiver validação estrita de schema.
     const payload = JSON.stringify({
       event: "telegram.message",
       webhook_id: wh.id,
@@ -127,38 +153,38 @@ onRecordAfterCreateSuccess((e) => {
       },
     })
 
-    // 4) POST pro webhook receptor
-    // PB 0.40+ JSVM: $http.send é SÍNCRONO. Se o container não conseguir
-    // resolver DNS ou conectar, trava até o timeout. O timeout: 10 (s)
-    // é pra leitura/escrita do socket, NÃO pra resolução DNS.
-    let resp
+    // POST pro webhook. $http.send é síncrono, timeout em segundos, throws
+    // em erro. Se a URL interna (http://n8n:5678) bater certinho, retorna
+    // em <100ms. Se timeout/dns/route falhar, throws em até 10s.
     try {
-      resp = $http.send({
-        url: wh.getString("url"),
+      const resp = $http.send({
+        url: targetUrl,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
         timeout: 10,
       })
-      console.log("[hook] X send returned status=" + resp.status)
       delivered++
       console.log(
         "telegram_messages hook: delivered msg=" + msg.id +
         " webhook=" + wh.id +
-        " status=" + resp.status,
+        " url=" + targetUrl +
+        " status=" + resp.statusCode,
       )
     } catch (err) {
       if (!firstError) firstError = String(err).substring(0, 500)
       console.log(
         "telegram_messages hook: webhook FAILED msg=" + msg.id +
         " webhook=" + wh.id +
+        " url=" + targetUrl +
         " err=" + String(err).substring(0, 200),
       )
     }
   }
 
-  // 5) Log final. NÃO tentamos persistir delivered_count/delivery_error
-  // porque $app.dao().saveRecord no AfterSuccess é descartado pela transação.
+  // 4) Log final. NÃO tentamos persistir delivered_count/delivery_error
+  // porque $app.dao().saveRecord no AfterSuccess é descartado pela
+  // transação (PB 0.40+).
   console.log(
     "telegram_messages hook: msg=" + msg.id +
     " session=" + sessionRel +
