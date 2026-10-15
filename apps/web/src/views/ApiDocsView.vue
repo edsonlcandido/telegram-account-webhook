@@ -32,7 +32,9 @@ const SEND_MESSAGE_PAYLOAD = JSON.stringify(
   {
     session_id: 'account_5511999998888',
     chat_id: 5511988887777,
-    text: 'Recebido! Já te respondo.',
+    text: '<b>Recebido!</b> Já te respondo.',
+    parse_mode: 'html',
+    image_url: null,
     reply_to_message_id: 1234,
   },
   null,
@@ -46,6 +48,20 @@ const SEND_MESSAGE_RESPONSE = JSON.stringify(
     chat_id: 5511988887777,
     timestamp: '2026-10-13T20:51:05.654321',
     is_reply: true,
+    parse_mode: 'html',
+    has_media: false,
+    media_type: null,
+  },
+  null,
+  2,
+)
+
+const SEND_IMAGE_PAYLOAD = JSON.stringify(
+  {
+    session_id: 'account_5511999998888',
+    chat_id: 5511988887777,
+    text: 'Olha essa foto',
+    image_url: 'https://exemplo.com/foto.jpg',
   },
   null,
   2,
@@ -315,6 +331,43 @@ function goBack() {
               </button>
             </div>
             <pre class="bg-gray-900 text-gray-100 text-xs rounded-xl p-4 overflow-x-auto leading-relaxed whitespace-pre"><code>{{ CURL_REPLY }}</code></pre>
+          </div>
+
+          <div>
+            <p class="font-semibold text-gray-800 mb-2">Modos suportados</p>
+            <p class="text-sm text-gray-600 mb-3">
+              O mesmo endpoint cobre 3 modos. Os campos <code>parse_mode</code> e
+              <code>image_url</code> são opcionais; mande o que precisar.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div class="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                <p class="font-semibold text-gray-800 mb-1">1. Texto simples</p>
+                <code class="text-gray-600">{"text": "oi"}</code>
+                <p class="text-gray-500 mt-1">Default. Não interpreta formatação.</p>
+              </div>
+              <div class="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                <p class="font-semibold text-gray-800 mb-1">2. Texto com HTML</p>
+                <code class="text-gray-600">{"text": "&lt;b&gt;oi&lt;/b&gt;", "parse_mode": "html"}</code>
+                <p class="text-gray-500 mt-1">Subset Telegram: &lt;b&gt;, &lt;i&gt;, &lt;u&gt;, &lt;s&gt;, &lt;code&gt;, &lt;pre&gt;, &lt;a href&gt;.</p>
+              </div>
+              <div class="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                <p class="font-semibold text-gray-800 mb-1">3. Imagem via URL</p>
+                <code class="text-gray-600">{"text": "...", "image_url": "https://..."}</code>
+                <p class="text-gray-500 mt-1">
+                  Foto legendada. Sem <code>text</code>, vai sem caption.
+                </p>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center justify-between">
+              <p class="text-xs text-gray-500">Exemplo de envio de imagem:</p>
+              <button
+                @click="copy('image', SEND_IMAGE_PAYLOAD)"
+                class="text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 font-medium"
+              >
+                {{ copied === 'image' ? '✓ Copiado' : 'Copiar' }}
+              </button>
+            </div>
+            <pre class="bg-gray-900 text-gray-100 text-xs rounded-xl p-4 overflow-x-auto leading-relaxed mt-2"><code>{{ SEND_IMAGE_PAYLOAD }}</code></pre>
           </div>
         </div>
       </section>

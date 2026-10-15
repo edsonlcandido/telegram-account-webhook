@@ -228,7 +228,7 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 | `DELETE` | `/api/webhooks/{webhook_id}` | sim | Remove webhook |
 | `POST` | `/api/webhooks/{webhook_id}/toggle` | sim | Liga/desliga sem deletar |
 | `POST` | `/api/webhooks/{webhook_id}/test` | sim | Dispara evento de teste (payload completo) |
-| `POST` | `/api/send-message` | sim | Envia mensagem via sessão (`chat_id` + `text` + `reply_to_message_id` opcional) |
+| `POST` | `/api/send-message` | sim | Envia mensagem via sessão. Aceita `text` (opcional se tem `image_url`), `parse_mode` (`plain`/`html`), `image_url` (URL pública validada contra SSRF), `reply_to_message_id`. Schema completo na seção "Enviar mensagem". |
 | `GET` | `/api/admin/sessions` | sim | Lista arquivos em `/app/sessions/*.json` (debug) |
 
 **Auth:** `Authorization: Bearer <jwt-do-pocketbase>`. O middleware `verify_pb_auth` valida contra o PB.
@@ -327,6 +327,97 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
 
 ---
 
+## Enviar mensagem (`POST /api/send-message`)
+
+Envia uma mensagem (texto, foto, ou ambos) via uma sessão Telegram ativa. Esse é o endpoint que o consumidor do webhook (ex: n8n) chama pra responder o chat de origem.
+
+**Auth:** `Authorization: Bearer <jwt-do-pocketbase>`.
+
+**Request body:**
+
+```json
+{
+  "session_id": "account_5511932055173",
+  "chat_id": 7892418175,
+  "text": "Olá! Recebi sua mensagem.",
+  "parse_mode": "plain",
+  "image_url": "https://example.com/foto.jpg",
+  "reply_to_message_id": 51689
+}
+```
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `session_id` | `string` | sim | ID da sessão Telegram (vem do payload do webhook: `session.session_id`) |
+| `chat_id` | `int` ou `string` | sim | ID numérico do chat **ou** `@username` (com `@`, ex: `"@fulanotelegram"`) |
+| `text` | `string` | um dos | Texto da mensagem. **Obrigatório se não tem `image_url`**. Se combinado com `image_url`, vira a caption da foto. |
+| `parse_mode` | `"plain"` \| `"html"` | não (default `"plain"`) | Subset HTML do Telegram Bot API. Tags permitidas: `b strong i em u s strike del code pre a`. Atributos permitidos: `a[href]`. Outros tags/attrs são rejeitados com `400`. |
+| `image_url` | `string` (URL http/https) | um dos | URL pública da foto. **Validada contra SSRF** — esquema tem que ser `http`/`https`, host não pode resolver pra IP privado/loopback/link-local/multicast/reserved/unspecified. |
+| `reply_to_message_id` | `int` | não | ID da mensagem à qual essa é uma reply (vem de `message.id` ou `message.reply_to_msg_id` no payload do webhook). |
+
+**Comportamento:**
+
+- Se tiver `text` E `image_url` → envia como foto com caption (text)
+- Se tiver só `image_url` → envia foto sem caption
+- Se tiver só `text` → envia mensagem de texto
+- Se não tiver nenhum dos dois → `400 "Informe text ou image_url"`
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "message_id": 51690,
+  "chat_id": 7892418175,
+  "timestamp": "2026-10-15T12:00:00+00:00",
+  "is_reply": true,
+  "parse_mode": "plain",
+  "has_media": false,
+  "media_type": null
+}
+```
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `success` | `bool` | Sempre `true` em 200 |
+| `message_id` | `int` | ID da mensagem enviada (usar pra reply/track) |
+| `chat_id` | `int` | Chat resolvido (numérico, mesmo se você mandou `@username`) |
+| `timestamp` | `string` (ISO 8601) | Data da mensagem no Telegram |
+| `is_reply` | `bool` | `true` se foi enviada com `reply_to_message_id` |
+| `parse_mode` | `string` \| `null` | O `parse_mode` que foi aplicado (sempre `null` se foi só foto sem caption) |
+| `has_media` | `bool` | `true` se incluiu foto |
+| `media_type` | `"photo"` \| `null` | Tipo da mídia enviada |
+
+**Errors comuns:**
+
+- `400 "Informe text ou image_url"` — nem text nem image_url foram passados
+- `400 "HTML inválido: ..."` — text tem tag/attr fora do subset (mais clara que `MsgStyleParseError` do Telethon)
+- `400 "image_url inválida: scheme inválido: ftp"` — URL não é http/https
+- `400 "image_url inválida: host resolve para IP bloqueado: 10.0.0.5"` — host resolve pra IP privado/loopback
+- `404 "Sessão não encontrada ou offline"` — `session_id` não tá em `active_clients` (Telethon não conectou ou sessão foi removida)
+- `400 "FloodWaitError: ..."` (ou outros erros do Telethon) — rate limit, sem permissão pra escrever no chat, peer inválido, etc. A `detail` da response 400 tem a mensagem original do Telethon.
+
+**Anti-loop automático:** a mensagem enviada é marcada no `_RECENTLY_SENT_IDS` por 10s. Quando o Telethon emite o evento `outgoing` dessa mensagem, o `handle_new_message` suprime o POST do webhook (mas o INSERT em `telegram_messages` audit log continua). Evita loop: webhook chega → n8n chama `/api/send-message` → webhook chega de novo → n8n chama de novo → ...
+
+**Exemplo de fluxo completo (n8n):**
+
+```text
+1. Telegram msg chega → POST webhook pro n8n
+2. n8n processa, decide responder
+3. n8n: POST https://api-telegram.ehtudo.app/api/send-message
+   body: {
+     "session_id": "{{ $json.session.session_id }}",
+     "chat_id": {{ $json.message.chat_id }},
+     "text": "Recebido!",
+     "reply_to_message_id": {{ $json.message.id }}
+   }
+4. FastAPI envia via Telethon
+5. Telethon emite outgoing event → handler INSERT em telegram_messages
+   (audit), mas SUPRIME o POST pro n8n (já viu essa msg em < 10s)
+```
+
+---
+
 ## Coleções PocketBase
 
 - `users`: Auth nativo do PB (email/senha → JWT).
@@ -336,7 +427,7 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
 - `telegram_webhooks`: `name`, `enabled`, `url` + filtros (`direction`, `chat_type`, `text_match`).
   - Relation com `telegram_sessions` (`cascadeDelete`). Vários webhooks por sessão.
   - O PB é source of truth — o arquivo é só pra carregar o cliente Telethon de volta no boot.
-- `telegram_messages`: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `text`, `created`. **Append-only** (updateRule e deleteRule = null). O FastAPI faz INSERT em toda mensagem (incoming + outgoing) que chega — é o audit log completo. O hook do PB é no-op (não faz forwarding).
+- `telegram_messages`: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. **Append-only** (updateRule e deleteRule = null). O FastAPI faz INSERT em toda mensagem (incoming + outgoing) que chega — é o audit log completo. O hook do PB é no-op (não faz forwarding).
 
 Schema inicial em `pocketbase/pb_migrations/1791780600_create_telegram_sessions.js`. Mudanças posteriores (alias, webhooks, etc.) via migrations idempotentes (regra: nunca editar uma migration depois de commitada — sempre criar uma nova).
 

@@ -4,19 +4,23 @@ Gerencia sessões Telethon e forwards mensagens para webhooks dos clientes
 """
 
 import os
+import re
 import json
 import time
 import asyncio
 import base64
 import logging
+import ipaddress
+import socket as _socket
 from pathlib import Path
+from urllib.parse import urlparse
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Literal
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, AnyHttpUrl
 from telethon import TelegramClient
 from telethon.events import NewMessage
 from telethon.sessions import StringSession
@@ -272,7 +276,9 @@ class UpdateSessionRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     session_id: str
     chat_id: int | str  # aceita ID numérico (int) ou @username (str)
-    text: str
+    text: Optional[str] = None
+    parse_mode: Literal["plain", "html"] = "plain"
+    image_url: Optional[AnyHttpUrl] = None
     reply_to_message_id: Optional[int] = None
 
 
@@ -1676,6 +1682,68 @@ async def register_account_pb(
 # -----------------------------------------------------------------------------
 # 7. Enviar mensagem (reply do webhook)
 # -----------------------------------------------------------------------------
+# Subset HTML que o Telegram aceita nativamente (mesmo do Bot API). Validar
+# ANTES de mandar pro Telethon dá mensagem de erro mais clara que deixar
+# o cliente estourar com `MsgStyleParseError` genérico.
+_ALLOWED_HTML_TAGS = {
+    "b", "strong", "i", "em", "u", "s", "strike", "del",
+    "code", "pre", "a",
+}
+_ALLOWED_HTML_ATTRS: Dict[str, set] = {"a": {"href"}}
+_HTML_TAG_RE = re.compile(
+    r"</?\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>", re.DOTALL
+)
+_HTML_ATTR_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9-]*)\s*=\s*"([^"]*)"')
+
+
+def _validate_html_subset(text: str) -> None:
+    """Levanta ValueError se houver tag/atributo fora do subset do Telegram."""
+    for m in _HTML_TAG_RE.finditer(text):
+        tag = m.group(1).lower()
+        if tag not in _ALLOWED_HTML_TAGS:
+            raise ValueError(f"tag HTML não permitida: <{tag}>")
+        attrs_str = m.group(2)
+        for am in _HTML_ATTR_RE.finditer(attrs_str):
+            attr_name = am.group(1).lower()
+            allowed = _ALLOWED_HTML_ATTRS.get(tag, set())
+            if attr_name not in allowed:
+                raise ValueError(
+                    f"atributo não permitido: {attr_name} em <{tag}>"
+                )
+
+
+def _validate_image_url(url: str) -> None:
+    """Bloqueia SSRF: scheme inválido + host que resolve pra IP privado/loopback.
+
+    Resolve o host via getaddrinfo e checa cada IP retornado contra ranges
+    privados/loopback/link-local/multicast/reservados. Não é à prova de
+    DNS rebinding (resolvemos 1x, Telethon baixa depois), mas combinado
+    com auth obrigatória no endpoint reduz a superfície de ataque.
+    """
+    p = urlparse(url)
+    if p.scheme not in ("http", "https"):
+        raise ValueError(f"scheme inválido: {p.scheme}")
+    host = p.hostname
+    if not host:
+        raise ValueError("host vazio")
+    try:
+        infos = _socket.getaddrinfo(host, None)
+    except _socket.gaierror as e:
+        raise ValueError(f"DNS falhou: {e}")
+    for info in infos:
+        ip = info[4][0]
+        ip_obj = ipaddress.ip_address(ip)
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        ):
+            raise ValueError(f"host resolve para IP bloqueado: {ip}")
+
+
 @app.post("/api/send-message")
 async def send_message(
     request: SendMessageRequest,
@@ -1687,26 +1755,76 @@ async def send_message(
     Aceita:
     - `chat_id` numérico (int) ou @username (str)
     - `reply_to_message_id` opcional pra responder uma mensagem específica
+    - `parse_mode` opcional: "plain" (default) ou "html" (subset Telegram)
+    - `image_url` opcional: URL http/https pública; vira caption se combinado
+      com `text` (também com `parse_mode` aplicável).
 
     Esse é o endpoint que o serviço externo (ex: n8n) chama pra responder
     depois de receber o webhook de uma mensagem recebida. O payload do
     webhook já entrega `chat_id` e `message_id` suficientes pra isso.
     """
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="Texto vazio")
+    has_text = bool(request.text and request.text.strip())
+    has_image = bool(request.image_url)
+    if not has_text and not has_image:
+        raise HTTPException(
+            status_code=400, detail="Informe text ou image_url"
+        )
 
     if request.session_id not in active_clients:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada ou offline")
+        raise HTTPException(
+            status_code=404, detail="Sessão não encontrada ou offline"
+        )
 
     client = active_clients[request.session_id]
 
-    try:
-        import time
-        kwargs = {}
-        if request.reply_to_message_id:
-            kwargs["reply_to"] = request.reply_to_message_id
+    # parse_mode='html' só faz sentido com texto. Validar subset aqui dá
+    # mensagem mais clara que deixar o Telethon estourar depois.
+    parse_mode_arg: Optional[str] = None
+    if request.parse_mode == "html" and has_text:
+        try:
+            _validate_html_subset(request.text)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"HTML inválido: {e}")
+        parse_mode_arg = "html"
 
-        sent = await client.send_message(request.chat_id, request.text, **kwargs)
+    # URL SSRF: scheme http/https + host não-privado
+    if has_image:
+        try:
+            _validate_image_url(str(request.image_url))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail=f"image_url inválida: {e}"
+            )
+
+    # kwargs comuns (reply_to aplica a texto E foto)
+    common_kwargs: dict = {}
+    if request.reply_to_message_id:
+        common_kwargs["reply_to"] = request.reply_to_message_id
+
+    try:
+        if has_image:
+            url = str(request.image_url)
+            if has_text:
+                sent = await client.send_file(
+                    request.chat_id,
+                    url,
+                    caption=request.text,
+                    parse_mode=parse_mode_arg,
+                    **common_kwargs,
+                )
+            else:
+                sent = await client.send_file(
+                    request.chat_id,
+                    url,
+                    **common_kwargs,
+                )
+        else:
+            sent = await client.send_message(
+                request.chat_id,
+                request.text,
+                parse_mode=parse_mode_arg,
+                **common_kwargs,
+            )
 
         # Marca o message_id como "nosso" pra suprimir o webhook que o
         # handler vai disparar logo em seguida (Telethon emite o evento
@@ -1719,11 +1837,18 @@ async def send_message(
             "message_id": sent.id,
             "chat_id": sent.chat_id,
             "timestamp": sent.date.isoformat(),
-            "is_reply": bool(kwargs.get("reply_to")),
+            "is_reply": bool(common_kwargs.get("reply_to")),
+            "parse_mode": request.parse_mode if has_text else None,
+            "has_media": has_image,
+            "media_type": "photo" if has_image else None,
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Erro ao enviar mensagem via {request.session_id}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        # FloodWait, ChatWriteForbidden, PeerIdInvalid, etc. caem aqui.
+        logger.error(f"Erro ao enviar mensagem via {request.session_id}: {msg}")
+        raise HTTPException(status_code=400, detail=msg)
 
 
 # =============================================================================

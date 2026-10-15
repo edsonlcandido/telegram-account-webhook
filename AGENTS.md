@@ -114,7 +114,7 @@ POCKETBASE_ADMIN_PASSWORD=...                # Auto-refresh: re-autentica 5min a
 - `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
   - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
   - **Esta é a lista que o FastAPI consulta no `handle_new_message` pra fazer o forwarding.**
-- `telegram_messages`: audit log. Append-only. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
+- `telegram_messages`: audit log. Append-only (updateRule/deleteRule = null). Schema: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
 
 ## API Backend
 
@@ -130,7 +130,7 @@ Endpoints principais do FastAPI (Telegram service). Lista completa no README.
 | DELETE | /api/webhooks/{id} | Remove webhook |
 | POST | /api/webhooks/{id}/toggle | Liga/desliga sem deletar |
 | POST | /api/webhooks/{id}/test | POSTa payload de teste na URL (FastAPI direto, não exercita o forwarding real) |
-| POST | /api/send-message | Envia mensagem via sessão Telegram |
+| POST | /api/send-message | Envia mensagem via sessão Telegram. Body: `{session_id, chat_id (int ou @username), text?, parse_mode? (plain\|html), image_url? (URL pública validada SSRF), reply_to_message_id?}`. Schema completo + erros comuns + fluxo anti-loop no README. |
 | GET | /health | Health check (`active_sessions`, `saved_sessions`) |
 | GET | /api/admin/sessions | Debug — lista arquivos `/app/sessions/*.json` |
 

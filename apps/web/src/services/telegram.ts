@@ -80,6 +80,27 @@ export interface SendMessageResponse {
   chat_id: number
   timestamp: string
   is_reply: boolean
+  parse_mode: ParseMode | null
+  has_media: boolean
+  media_type: string | null
+}
+
+export type ParseMode = 'plain' | 'html'
+
+/**
+ * Body do POST /api/send-message.
+ *
+ * `text` e `image_url` são mutuamente complementares: o endpoint aceita
+ * (a) só texto, (b) só imagem, (c) imagem com caption. Mandar os dois
+ * ausentes retorna 400.
+ */
+export interface SendMessageInput {
+  session_id: string
+  chat_id: number | string
+  text?: string
+  parse_mode?: ParseMode
+  image_url?: string
+  reply_to_message_id?: number
 }
 
 /**
@@ -237,20 +258,10 @@ export const telegramApi = {
   },
 
   // ---- Mensagens ----
-  async sendMessage(
-    sessionId: string,
-    chatId: number | string,
-    text: string,
-    replyToMessageId?: number,
-  ): Promise<SendMessageResponse> {
+  async sendMessage(input: SendMessageInput): Promise<SendMessageResponse> {
     return request<SendMessageResponse>('/send-message', {
       method: 'POST',
-      body: JSON.stringify({
-        session_id: sessionId,
-        chat_id: chatId,
-        text,
-        ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}),
-      }),
+      body: JSON.stringify(input),
     })
   },
 }

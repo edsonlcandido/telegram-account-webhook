@@ -440,6 +440,37 @@
               </div>
 
               <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Formato</label>
+                <select
+                  v-model="sendModal.parseMode"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none bg-white"
+                  :disabled="sendModal.loading"
+                >
+                  <option value="plain">Texto simples</option>
+                  <option value="html">HTML básico (negrito, itálico, links...)</option>
+                </select>
+                <p class="mt-1 text-xs text-gray-500" v-if="sendModal.parseMode === 'html'">
+                  Tags aceitas: &lt;b&gt;, &lt;i&gt;, &lt;u&gt;, &lt;s&gt;, &lt;code&gt;, &lt;pre&gt; e &lt;a href="..."&gt;.
+                </p>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                  Imagem (URL, opcional)
+                </label>
+                <input
+                  v-model="sendModal.imageUrl"
+                  type="url"
+                  placeholder="https://exemplo.com/foto.jpg"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  :disabled="sendModal.loading"
+                />
+                <p class="mt-1 text-xs text-gray-500">
+                  Se preenchida, vira foto. Com texto junto, o texto vira caption.
+                </p>
+              </div>
+
+              <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">Mensagem</label>
                 <textarea
                   v-model="sendModal.text"
@@ -602,19 +633,25 @@ const sendModal = reactive({
   session: null as TelegramSession | null,
   chatId: '',
   text: '',
+  parseMode: 'plain' as 'plain' | 'html',
+  imageUrl: '',
   replyTo: null as number | null,
   loading: false,
   result: null as { success: boolean; message_id?: number; message?: string } | null,
 })
 
 const canSend = computed(() => {
-  return sendModal.chatId.trim() !== '' && sendModal.text.trim() !== ''
+  const hasText = sendModal.text.trim() !== ''
+  const hasImage = sendModal.imageUrl.trim() !== ''
+  return sendModal.chatId.trim() !== '' && (hasText || hasImage)
 })
 
 function openSendModal(session: TelegramSession) {
   sendModal.session = session
   sendModal.chatId = ''
   sendModal.text = ''
+  sendModal.parseMode = 'plain'
+  sendModal.imageUrl = ''
   sendModal.replyTo = null
   sendModal.result = null
   sendModal.show = true
@@ -637,12 +674,14 @@ async function executeSend() {
     const isNumeric = /^\d+$/.test(trimmed)
     const chatId: number | string = isNumeric ? Number(trimmed) : trimmed
 
-    const res = await telegramApi.sendMessage(
-      sendModal.session.session_id,
-      chatId,
-      sendModal.text.trim(),
-      sendModal.replyTo ?? undefined,
-    )
+    const res = await telegramApi.sendMessage({
+      session_id: sendModal.session.session_id,
+      chat_id: chatId,
+      text: sendModal.text.trim() || undefined,
+      parse_mode: sendModal.parseMode,
+      image_url: sendModal.imageUrl.trim() || undefined,
+      reply_to_message_id: sendModal.replyTo ?? undefined,
+    })
     sendModal.result = { success: res.success, message_id: res.message_id }
   } catch (error: any) {
     sendModal.result = { success: false, message: error?.message || 'Erro ao enviar' }
