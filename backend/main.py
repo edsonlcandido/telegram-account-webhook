@@ -7,6 +7,7 @@ import os
 import json
 import time
 import asyncio
+import base64
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -55,6 +56,13 @@ POCKETBASE_ADMIN_PASSWORD = os.getenv("POCKETBASE_ADMIN_PASSWORD", "")
 # Cache do token em memória. Populado pelo lifespan startup, refresh em
 # background task se 401.
 _PB_SERVICE_TOKEN: Optional[str] = None
+# `exp` (epoch seconds) do token cacheado — usado pra refresh proativo
+# antes de quebrar ao meio de uma request. PB default é 14 dias, mas o
+# admin pode estender via "verification lifetime" no admin UI.
+_PB_SERVICE_TOKEN_EXP: Optional[int] = None
+# Margem de segurança: refresh quando faltar `_PB_REFRESH_MARGIN_SEC`
+# segundos. Evita race entre checagem de exp e request que tá saindo.
+_PB_REFRESH_MARGIN_SEC = 300  # 5 min
 
 SESSIONS_DIR = Path("/app/sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
@@ -80,19 +88,45 @@ logger = logging.getLogger(__name__)
 # chamadas internas. Token cacheado em `_PB_SERVICE_TOKEN`, populado no
 # lifespan startup, re-autenticado em background se 401.
 
-async def _obtain_pb_service_token() -> str:
-    """Obtém o service token (uma vez, cacheado em `_PB_SERVICE_TOKEN`).
+def _jwt_exp(token: str) -> Optional[int]:
+    """Extrai o claim `exp` (epoch seconds) de um JWT do PocketBase.
 
-    Estratégia:
-    1) Se POCKETBASE_SERVICE_TOKEN (env) já tá populado, usa direto.
-       JWT dedicado, sem senha em env. Gerar uma vez no admin UI.
-    2) Senão, se POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD tão
-       setados, login via /_superusers/auth-with-password.
+    Sem dependência externa (sem PyJWT). Decodifica só a payload
+    (segundo segmento) com base64url. Retorna None se o token for
+    malformado ou não tiver `exp`.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload_b64 = parts[1]
+        # base64url precisa de padding múltiplo de 4
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        decoded = base64.urlsafe_b64decode(payload_b64)
+        data = json.loads(decoded)
+        exp = data.get("exp")
+        return int(exp) if exp is not None else None
+    except Exception:
+        return None
+
+
+async def _obtain_pb_service_token() -> tuple[str, Optional[int]]:
+    """Obtém o service token (chamado quando precisa refresh).
+
+    Estratégia (em ordem):
+    1) POCKETBASE_SERVICE_TOKEN (env) com JWT pronto — sem senha no env.
+       Gerar uma vez no admin UI. Pra refresh, o usuário é responsável
+       por rotacionar o JWT antes de expirar (esse caminho não re-autentica).
+    2) POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD — login via
+       /_superusers/auth-with-password. Esse caminho SEMPRE funciona e
+       o token é refreshed automaticamente a cada `exp - 5min`.
     3) Senão, falha com mensagem clara.
+
+    Returns: (token, exp_epoch_seconds ou None se caminho 1)
     """
     if POCKETBASE_SERVICE_TOKEN_ENV:
         logger.info("🔑 PB service token: usando POCKETBASE_SERVICE_TOKEN do env")
-        return POCKETBASE_SERVICE_TOKEN_ENV
+        return POCKETBASE_SERVICE_TOKEN_ENV, _jwt_exp(POCKETBASE_SERVICE_TOKEN_ENV)
 
     if not POCKETBASE_ADMIN_EMAIL or not POCKETBASE_ADMIN_PASSWORD:
         raise RuntimeError(
@@ -114,24 +148,58 @@ async def _obtain_pb_service_token() -> str:
             f"PB admin login falhou: {r.status_code} "
             f"{r.text[:200]} (verifique POCKETBASE_ADMIN_EMAIL/PASSWORD)"
         )
-    token = r.json().get("token")
+    body = r.json()
+    token = body.get("token")
     if not token:
-        raise RuntimeError(f"PB admin login não retornou token: {r.text[:200]}")
-    logger.info(
-        f"🔑 PB service token: login como {POCKETBASE_ADMIN_EMAIL} OK "
-        f"(expira em {r.json().get('token', {}).get('exp')})"
-        if isinstance(r.json().get("token"), dict)
-        else f"🔑 PB service token: login como {POCKETBASE_ADMIN_EMAIL} OK"
-    )
-    return token
+        raise RuntimeError(f"PB admin login não retornou token: {str(body)[:200]}")
+    exp = _jwt_exp(token)
+    if exp:
+        remaining_days = (exp - int(time.time())) / 86400
+        logger.info(
+            f"🔑 PB service token: login como {POCKETBASE_ADMIN_EMAIL} OK "
+            f"(exp em {remaining_days:.1f} dias)"
+        )
+    else:
+        logger.info(f"🔑 PB service token: login como {POCKETBASE_ADMIN_EMAIL} OK")
+    return token, exp
 
 
 async def _ensure_pb_service_token() -> str:
-    """Garante `_PB_SERVICE_TOKEN` populado (lazy + cached)."""
-    global _PB_SERVICE_TOKEN
-    if _PB_SERVICE_TOKEN:
+    """Garante `_PB_SERVICE_TOKEN` válido (lazy + cached + auto-refresh).
+
+    Refresh proativo: re-autentica quando faltar `_PB_REFRESH_MARGIN_SEC`
+    segundos pro `exp` do token cacheado. Evita que uma request morra
+    no meio com 401 porque o token expirou.
+
+    Refresh reativo: se uma request retorna 401, o caller pode chamar
+    `force_refresh_pb_service_token()` pra re-autenticar fora do ciclo
+    lazy.
+    """
+    global _PB_SERVICE_TOKEN, _PB_SERVICE_TOKEN_EXP
+    now = int(time.time())
+
+    if _PB_SERVICE_TOKEN and _PB_SERVICE_TOKEN_EXP:
+        if now < _PB_SERVICE_TOKEN_EXP - _PB_REFRESH_MARGIN_SEC:
+            return _PB_SERVICE_TOKEN
+        logger.info(
+            f"🔄 PB service token próximo do expiry "
+            f"(now={now}, exp={_PB_SERVICE_TOKEN_EXP}, margin={_PB_REFRESH_MARGIN_SEC}s). "
+            f"Re-autenticando..."
+        )
+    elif _PB_SERVICE_TOKEN and not _PB_SERVICE_TOKEN_EXP:
+        # Caminho 1 (token fixo do env) sem exp parseado — assume válido.
+        # Pra ter auto-refresh, o user precisa usar caminho 2 (login).
         return _PB_SERVICE_TOKEN
-    _PB_SERVICE_TOKEN = await _obtain_pb_service_token()
+
+    _PB_SERVICE_TOKEN, _PB_SERVICE_TOKEN_EXP = await _obtain_pb_service_token()
+    return _PB_SERVICE_TOKEN
+
+
+async def force_refresh_pb_service_token() -> str:
+    """Força re-autenticação (chamar quando PB retorna 401)."""
+    global _PB_SERVICE_TOKEN, _PB_SERVICE_TOKEN_EXP
+    logger.info("🔄 PB service token: refresh forçado (provável 401)")
+    _PB_SERVICE_TOKEN, _PB_SERVICE_TOKEN_EXP = await _obtain_pb_service_token()
     return _PB_SERVICE_TOKEN
 
 
@@ -258,19 +326,30 @@ def delete_session_file(session_id: str):
 
 
 # =============================================================================
-# Event Handler - INSERT em telegram_messages, hook do PB distribui
+# Event Handler - Forwarding + audit log
 # =============================================================================
 #
-# A lógica de filtro + envio pros webhooks agora é responsabilidade do hook
-# onRecordAfterCreate em pb_hooks/main.pb.js (roda DENTRO do PB, sem auth,
-# sem propagação de token). O FastAPI só insere o record da mensagem.
+# A lógica de filtro + envio pros webhooks + INSERT de audit é feita
+# toda pelo Telethon service (este arquivo). Razão: o container do
+# PB no Easypanel pode ter egress restrito pra certos IPs externos
+# (network ACL) — $http.send trava indefinidamente. O Telethon
+# service tem egress liberado (fala com Telegram API, PB, IPs
+# externos) e Python httpx com timeout limpo.
 #
-# O FastAPI usa UM único service token (_PB_SERVICE_TOKEN, cacheado no
-# lifespan startup) pra TODAS as chamadas internas ao PB — não cacheia
-# token por user, não cacheia pb_id por sessão, não tenta descobrir
-# "dono" da sessão. Se o token do user não bate, é problema do user
-# (não do Telethon). O Telethon recebe a msg, manda pro PB com o
-# service token, e esquece. PB cuida do resto.
+# O FastAPI usa UM único service token (_PB_SERVICE_TOKEN, cacheado
+# no lifespan startup) pra TODAS as chamadas internas ao PB — não
+# cacheia token por user, não cacheia pb_id por sessão, não tenta
+# descobrir "dono" da sessão. O token é refrescado proativamente
+# 5 min antes do `exp` (ver `_ensure_pb_service_token`).
+#
+# O hook `onRecordAfterCreateSuccess` em `pocketbase/pb_hooks/main.pb.js`
+# é NO-OP — só loga o INSERT, sem fazer forwarding. Sem duplicação
+# de webhook.
+#
+# Audit log: `telegram_messages` recebe TODA mensagem (incoming +
+# outgoing), incluindo as que o user enviou via /api/send-message.
+# A supressão de forwarding pra evitar loop com o receptor do webhook
+# (ex: n8n respondendo) acontece SÓ no loop de webhooks, não no INSERT.
 
 
 def _classify_chat_type(event) -> str:
@@ -333,9 +412,10 @@ async def handle_new_message(event, session_id: str):
             )
             return
 
-        # Ignora mensagens que NÓS mesmos enviamos (loop infinito)
-        if _is_recently_sent(event.id):
-            return
+        # Audit log SEMPRE acontece — mesmo pras mensagens que nós
+        # mesmos enviamos via /api/send-message. A supressão de
+        # forwarding pra essas mensagens é feita DENTRO do loop
+        # de webhooks (skip do POST, não do audit).
 
         # Service token (cacheado no lifespan, re-auth se expirado)
         await _ensure_pb_service_token()
@@ -396,6 +476,10 @@ async def handle_new_message(event, session_id: str):
             webhooks = r.json().get("items", [])
 
         # 5) Filtra e distribui
+        # Anti-loop: se a mensagem foi enviada por NÓS mesmos via
+        # /api/send-message nos últimos 10s, suprime o POST mas a
+        # audit INSERT em `telegram_messages` continua normal.
+        skip_forwarding = _is_recently_sent(event.id)
         delivered = 0
         failed = 0
         for wh in webhooks:
@@ -423,6 +507,11 @@ async def handle_new_message(event, session_id: str):
                         continue
                     if op == "contains" and needle not in haystack:
                         continue
+
+            # Anti-loop: pular o POST (mas o audit INSERT já foi
+            # feito, ou vai ser feito depois).
+            if skip_forwarding:
+                continue
 
             url = wh.get("url")
             if not url:
@@ -556,13 +645,13 @@ def register_message_handler(client, session_id: str):
     """
     @client.on(NewMessage())
     async def handler(event):
-        # Suprime mensagens enviadas por nós mesmos via /api/send-message
-        # pra não gerar loop com o webhook receptor (ex: n8n respondendo).
-        # Usa getattr pq o `event.outgoing` nem sempre delega (depende
-        # da versão do Telethon — às vezes vem `Message has no attribute
-        # 'outgoing'` se o message for None ou partial).
-        if getattr(event, "outgoing", False) and _is_recently_sent(event.id):
-            return
+        # NÃO suprime aqui — queremos que TODA mensagem (incluindo as
+        # que nós mesmos enviamos via /api/send-message) seja inserida
+        # em `telegram_messages` (audit log completo). A supressão
+        # pra evitar loop com o receptor do webhook (ex: n8n
+        # respondendo às nossas mensagens) acontece DENTRO do
+        # `handle_new_message`, no loop de webhooks (skip só do
+        # POST, não do audit).
         await handle_new_message(event, session_id)
     logger.debug(f"📨 Handler NewMessage registrado para {session_id}")
 

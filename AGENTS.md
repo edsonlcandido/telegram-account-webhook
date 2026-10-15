@@ -11,23 +11,41 @@ Sistema para conectar contas Telegram e enviar mensagens em tempo real via webho
 │  ┌────────────────────────────────────────────────────────────────┐ │
 │  │  Serviço 1: Application                                         │ │
 │  │  ────────────────────────────────────────────────────────────   │ │
-│  │  • PocketBase :8090                                            │ │
+│  │  • PocketBase :8090   (DB + Auth + Admin UI)                   │ │
 │  │  • Landing Page /                                              │ │
 │  │  • Web App /app/                                              │ │
+│  │                                                                 │ │
+│  │  Hook do PB: NO-OP (loga INSERT em telegram_messages,          │ │
+│  │  mas NÃO faz forwarding — ver Serviço 2 abaixo)                │ │
 │  │                                                                 │ │
 │  │  TELEGRAM_API_URL=http://telegram-api:8000                     │ │
 │  └────────────────────────────────────────────────────────────────┘ │
 │                              │                                      │
-│                              │ HTTP (interno)                        │
+│                              │ HTTP (rede Docker interna)            │
 │                              ▼                                      │
 │  ┌────────────────────────────────────────────────────────────────┐ │
 │  │  Serviço 2: Telegram API                                       │ │
 │  │  ────────────────────────────────────────────────────────────   │ │
 │  │  • FastAPI :8000                                               │ │
 │  │  • Telethon                                                    │ │
+│  │                                                                 │ │
+│  │  Responsável pelo FORWARDING de webhooks:                       │ │
+│  │   1) Telethon recebe nova mensagem                             │ │
+│  │   2) FastAPI consulta `telegram_webhooks` no PB                │ │
+│  │   3) Filtra direction/chat_type/text_match in-process          │ │
+│  │   4) httpx.post em cada um com timeout 10s                     │ │
+│  │   5) INSERT em `telegram_messages` (audit log completo)        │ │
+│  │                                                                 │ │
+│  │  POCKETBASE_URL=http://pocketbase:8090                          │ │
+│  │  POCKETBASE_SERVICE_TOKEN=<jwt-de-superuser>                    │ │
+│  │     (ou POCKETBASE_ADMIN_EMAIL + PASSWORD p/ login auto)        │ │
 │  └────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+**Por que FastAPI faz o forwarding e não o hook do PB:**
+
+O container do PB no Easypanel pode ter egress restrito pra certos IPs externos (network ACL) — `$http.send` trava indefinidamente. O container do Telethon service tem egress liberado pra internet (fala com Telegram API, PB, e IPs externos). Python `httpx` com timeout limpo vence PB JSVM síncrono nesse cenário.
 
 ## Estrutura
 
@@ -36,15 +54,15 @@ telegram-account-webhook/
 ├── Dockerfile.Application          # PocketBase + Frontend Vue
 ├── Dockerfile.Telegram             # FastAPI + Telethon
 ├── backend/
-│   ├── main.py
+│   ├── main.py                     # FastAPI: auth, webhooks, forwarding, send-message
 │   ├── requirements.txt
 │   └── .env.example
 ├── apps/
 │   ├── landing/                    # Landing page
 │   └── web/                        # Web app Vue
 ├── pocketbase/
-│   ├── pb_hooks/                  # SPA routing hooks
-│   │   └── main.pb.js
+│   ├── pb_hooks/
+│   │   └── main.pb.js              # no-op (forwarding é no FastAPI)
 │   └── pb_migrations/
 ├── .agents/
 │   └── skills/
@@ -56,11 +74,14 @@ telegram-account-webhook/
 ## Deploy
 
 **Webhook para deploy automático:**
+
 ```
-http://82.112.244.9:3000/api/deploy/d08148ad7475ab169bc6b4baac629cc1c0e18c900b11d525
+<easypanel-host>/api/deploy/<token-do-servico-application>
 ```
 
-Push para `main` = deploy automático via Easypanel.
+O `<easypanel-host>` é o servidor onde o painel Easypanel está rodando (ex: `painel.ehtudo.app` ou IP da VPS). O token fica nas configs do serviço no painel. **NÃO commitar o IP/host do servidor nem o token** — esses são sensíveis e mudam por projeto.
+
+Push para `main` = deploy automático via Easypanel (manual via webhook — ver abaixo).
 
 ## Variáveis de Ambiente
 
@@ -76,6 +97,12 @@ TELEGRAM_API_URL=http://telegram-api:8000    # URL do Telegram API (interno Dock
 POCKETBASE_URL=http://pocketbase:8090         # URL do PocketBase (interno Docker)
 TG_API_ID=123456
 TG_API_HASH=abc123...
+
+# Autenticação do FastAPI no PB (uma das duas):
+POCKETBASE_SERVICE_TOKEN=<jwt>               # Opção A: JWT pronto, sem senha no env
+# OU
+POCKETBASE_ADMIN_EMAIL=service@eh-tudo.app   # Opção B: login automático no startup
+POCKETBASE_ADMIN_PASSWORD=...                # Auto-refresh: re-autentica 5min antes do exp
 ```
 
 ## Coleções PocketBase
@@ -86,15 +113,26 @@ TG_API_HASH=abc123...
   - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container (single-app).
 - `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
   - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
+  - **Esta é a lista que o FastAPI consulta no `handle_new_message` pra fazer o forwarding.**
+- `telegram_messages`: audit log. Append-only. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
 
 ## API Backend
 
+Endpoints principais do FastAPI (Telegram service). Lista completa no README.
+
 | Method | Endpoint | Descrição |
 |--------|----------|-----------|
-| POST | /api/auth/send-code | Envia código Telegram |
-| POST | /api/auth/verify | Verifica código |
-| POST | /api/webhook/configure | Configura webhook |
-| GET | /health | Health check |
+| POST | /api/send-code | Envia código Telegram (signup) |
+| POST | /api/verify-code | Verifica código + cria sessão |
+| GET | /api/sessions | Lista sessões + webhooks_count |
+| POST | /api/sessions/{id}/webhooks | Cria webhook |
+| PATCH | /api/webhooks/{id} | Edita webhook (URL/filtros/enabled) |
+| DELETE | /api/webhooks/{id} | Remove webhook |
+| POST | /api/webhooks/{id}/toggle | Liga/desliga sem deletar |
+| POST | /api/webhooks/{id}/test | POSTa payload de teste na URL (FastAPI direto, não exercita o forwarding real) |
+| POST | /api/send-message | Envia mensagem via sessão Telegram |
+| GET | /health | Health check (`active_sessions`, `saved_sessions`) |
+| GET | /api/admin/sessions | Debug — lista arquivos `/app/sessions/*.json` |
 
 ## Comandos
 
@@ -146,7 +184,7 @@ O `autoDeploy: false` no Easypanel pra `telegram-account-webhook`. Push pro `mai
 
 ```bash
 $body = '{}'
-Invoke-WebRequest -Method POST -Uri 'http://82.112.244.9:3000/api/deploy/d08148ad7475ab169bc6b4baac629cc1c0e18c900b11d525' -ContentType 'application/json' -Body $body -UseBasicParsing
+Invoke-WebRequest -Method POST -Uri '<easypanel-host>/api/deploy/<token-do-servico-application>' -ContentType 'application/json' -Body $body -UseBasicParsing
 ```
 
 Ou via MCP do Easypanel: `deployAppService` com `{projectName: "eh-tudo", serviceName: "telegram-account-webhook"}` (precisa de `execute_destructive`, não `execute_mutation`).

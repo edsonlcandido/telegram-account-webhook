@@ -58,7 +58,14 @@ Dois serviços no Easypanel, ambos construídos a partir deste repo (`build.type
 
 - O **frontend** (Vue) fala com **PocketBase** (mesma origem no proxy do Easypanel → sem CORS).
 - O **PocketBase** (no serviço Application) faz proxy das chamadas de webhook/mensagens via FastAPI em `http://telegram-api:8000` (hostname Docker do serviço Telegram, configurado em `TELEGRAM_API_URL`).
-- O **FastAPI** (serviço Telegram) lê do `POCKETBASE_URL` pra listar webhooks ativos e atualizar a coleção `telegram_sessions` ao criar conta.
+- O **FastAPI** (serviço Telegram) é o **responsável pelo forwarding de webhooks**:
+  1. Telethon recebe nova mensagem
+  2. FastAPI consulta `telegram_webhooks` no PB (1 GET com filter)
+  3. Aplica os filtros (direction, chat_type, text_match)
+  4. POST em cada webhook ativo com `httpx` (timeout 10s, asyncio)
+  5. Faz INSERT em `telegram_messages` (audit log; PB hook é no-op)
+- O **PocketBase** (serviço Application) só armazena dados — não faz forwarding. O hook `onRecordAfterCreateSuccess` em `pb_hooks/main.pb.js` é **no-op** (loga o INSERT mas não dispara HTTP). Razão: o container do PB no Easypanel pode ter egress restrito pra certos IPs externos (network ACL); o container do FastAPI/Telethon tem egress liberado (fala com Telegram API, PB, e IPs externos sem problema).
+- O **FastAPI** autentica no PB via **service token** (POCKETBASE_SERVICE_TOKEN ou POCKETBASE_ADMIN_EMAIL+PASSWORD). Usado pra TODAS as chamadas internas — INSERT em audit, lookup de sessão, listagem de webhooks. User JWT normal só pros endpoints autenticados do frontend.
 
 **Importante:** `TELEGRAM_API_URL` deve ser o **hostname Docker interno** (`telegram-api:8000`), não a URL pública. O hostname do serviço Telegram no docker-compose é `telegram-api`; no Easypanel é resolvido pela rede interna do projeto.
 
@@ -125,6 +132,11 @@ telegram-account-webhook/
 | `TG_API_ID` | sim | API ID do app Telegram (my.telegram.org) | `37377307` |
 | `TG_API_HASH` | sim | API Hash do app Telegram | `a700ecef...` |
 | `ALLOWED_ORIGINS` | sim | Lista CSV de origens CORS | `https://telegram-webhook.ehtudo.app` |
+| `POCKETBASE_SERVICE_TOKEN` | **uma das duas** | JWT de superuser (já pronto) — login manual no admin UI do PB, copia token, cola aqui. Token default 14 dias (admin pode estender). | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` |
+| `POCKETBASE_ADMIN_EMAIL` | **uma das duas** | Email do superuser (login automático no startup). Usado SÓ se `POCKETBASE_SERVICE_TOKEN` não estiver setado. | `service@eh-tudo.app` |
+| `POCKETBASE_ADMIN_PASSWORD` | **complemento** | Senha do superuser (login automático). | `...` |
+
+> **Service token** é o que permite o FastAPI fazer INSERT em `telegram_messages` (audit) e consultar `telegram_webhooks` em background. Sem ele, **toda mensagem é dropada com warning** (handler do Telethon não tem request HTTP no contexto, não tem user JWT pra repassar). Use **Opção A** (service token pronto) pra produção — não deixa senha em env. Use **Opção B** (login auto) só pra dev/simplicidade. Auto-refresh: o FastAPI re-autentica sozinho quando o token estiver a 5min de expirar (só funciona com Opção B).
 
 ### Arquivo `backend/.env.example`
 
@@ -182,12 +194,12 @@ Para rebuildar e fazer deploy:
 # Application (webapp + PB)
 $body = '{}'
 Invoke-WebRequest -Method POST `
-  -Uri 'http://82.112.244.9:3000/api/deploy/<token-do-servico-application>' `
+  -Uri '<easypanel-host>/api/deploy/<token-do-servico-application>' `
   -ContentType 'application/json' -Body $body -UseBasicParsing
 
 # Telegram API (backend)
 Invoke-WebRequest -Method POST `
-  -Uri 'http://82.112.244.9:3000/api/deploy/<token-do-servico-telegram>' `
+  -Uri '<easypanel-host>/api/deploy/<token-do-servico-telegram>' `
   -ContentType 'application/json' -Body $body -UseBasicParsing
 ```
 
@@ -216,7 +228,6 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 | `DELETE` | `/api/webhooks/{webhook_id}` | sim | Remove webhook |
 | `POST` | `/api/webhooks/{webhook_id}/toggle` | sim | Liga/desliga sem deletar |
 | `POST` | `/api/webhooks/{webhook_id}/test` | sim | Dispara evento de teste (payload completo) |
-| `POST` | `/api/webhooks/refresh-cache` | sim | Invalida cache de webhooks (admin) |
 | `POST` | `/api/send-message` | sim | Envia mensagem via sessão (`chat_id` + `text` + `reply_to_message_id` opcional) |
 | `GET` | `/api/admin/sessions` | sim | Lista arquivos em `/app/sessions/*.json` (debug) |
 
@@ -224,32 +235,40 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 
 ### Webhook payload (POST recebido pelo seu endpoint)
 
+Schema atual (gerado pelo FastAPI no `handle_new_message`):
+
 ```json
 {
-  "event": "new_message",
-  "session_id": "account_5511932055173",
+  "event": "telegram.message",
+  "webhook_id": "m9fck2xji5cghno",
+  "webhook_name": "ativa-plugin",
+  "session": {
+    "pb_id": "4ihcmc6a621sdij",
+    "session_id": "account_5511932055173",
+    "phone": "+5511932055173",
+    "name": "Vendas"
+  },
   "message": {
-    "id": 12345,
+    "id": 51689,
+    "chat_id": -1003350466807,
+    "chat_type": "group",
+    "chat_title": "Nome do grupo",
+    "direction": "incoming",
+    "sender_id": 987654321,
+    "sender_name": "Fulano",
     "text": "oi, tudo bem?",
-    "date": "2026-10-13T22:00:00Z",
-    "is_outgoing": false
-  },
-  "chat": {
-    "id": -1001234567890,
-    "type": "supergroup",
-    "title": "Nome do grupo",
-    "username": null
-  },
-  "sender": {
-    "id": 987654321,
-    "username": "fulano",
-    "first_name": "Fulano",
-    "is_bot": false
+    "timestamp": "2026-10-15T11:00:00+00:00"
   }
 }
 ```
 
-Anti-loop: o serviço **ignora mensagens cujo `id` está em `_RECENTLY_SENT_IDS`** (mensagens enviadas pelo próprio `/api/send-message`).
+**Campos importantes:**
+
+- `message.direction`: `"incoming"` (recebida) ou `"outgoing"` (enviada pela própria conta via Telegram app/desktop ou via nosso `/api/send-message`).
+- `message.timestamp`: ISO 8601 UTC (data da mensagem no Telegram).
+- `webhook_id` e `webhook_name`: identificação do webhook que recebeu o POST (útil quando o user tem vários webhooks na mesma sessão).
+
+**Anti-loop:** o handler suprime forwarding (mas NÃO o audit log em `telegram_messages`) pra mensagens que a própria API enviou via `/api/send-message` nos últimos 10s, evitando loop com o receptor do webhook (ex: n8n respondendo às nossas mensagens).
 
 ---
 
@@ -262,6 +281,7 @@ Anti-loop: o serviço **ignora mensagens cujo `id` está em `_RECENTLY_SENT_IDS`
 - `telegram_webhooks`: `name`, `enabled`, `url` + filtros (`direction`, `chat_type`, `text_match`).
   - Relation com `telegram_sessions` (`cascadeDelete`). Vários webhooks por sessão.
   - O PB é source of truth — o arquivo é só pra carregar o cliente Telethon de volta no boot.
+- `telegram_messages`: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `text`, `created`. **Append-only** (updateRule e deleteRule = null). O FastAPI faz INSERT em toda mensagem (incoming + outgoing) que chega — é o audit log completo. O hook do PB é no-op (não faz forwarding).
 
 Schema inicial em `pocketbase/pb_migrations/1791780600_create_telegram_sessions.js`. Mudanças posteriores (alias, webhooks, etc.) via migrations idempotentes (regra: nunca editar uma migration depois de commitada — sempre criar uma nova).
 

@@ -261,7 +261,7 @@ a route handler and consider re-enabling the hook (currently saved as
 2. `git commit -m "feat(pb): <description>"` and `git push origin main`
 3. Trigger rebuild via Easypanel:
    - Web UI: open service `telegram-account-webhook` → Deploy
-   - Or via webhook: `curl -X POST http://82.112.244.9:3000/api/deploy/d08148ad7475ab169bc6b4baac629cc1c0e18c900b11d525`
+   - Or via webhook: `curl -X POST <easypanel-host>/api/deploy/<token-do-servico-application>`
    - Or via MCP easypanel-bleach: `deployAppService` on
      `eh-tudo/telegram-account-webhook`
 
