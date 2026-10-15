@@ -24,13 +24,16 @@ onRecordAfterCreateSuccess((e) => {
   // Fazemos o trabalho de distribuir pros webhooks. Se o save inicial
   // falhar, esse hook não é chamado.
 
+  console.log("[hook] X START record.id=" + e.record.id)
   const msg = e.record
   const sessionRel = msg.getString("session")
+  console.log("[hook] X sessionRel=" + sessionRel)
 
   // 1) Acha a sessão
   let session
   try {
     session = $app.findRecordById("telegram_sessions", sessionRel)
+    console.log("[hook] X session found")
   } catch (err) {
     console.log("telegram_messages hook: sessão não encontrada:", String(err))
     return
@@ -47,6 +50,7 @@ onRecordAfterCreateSuccess((e) => {
       0,
       { sid: sessionRel },
     )
+    console.log("[hook] X webhooks found count=" + (webhooks ? webhooks.length : -1))
   } catch (err) {
     console.log("telegram_messages hook: erro listando webhooks:", String(err))
     return
@@ -68,15 +72,18 @@ onRecordAfterCreateSuccess((e) => {
     let pass = true
     try {
       const dir = wh.getString("filter_direction") || "all"
+      console.log("[hook] X dir=" + dir)
       if (dir !== "all" && dir !== msg.getString("direction")) pass = false
 
       if (pass) {
         const ct = wh.getString("filter_chat_type") || "all"
+        console.log("[hook] X ct=" + ct)
         if (ct !== "all" && ct !== msg.getString("chat_type")) pass = false
       }
 
       if (pass) {
         const op = wh.getString("filter_text_match_operator") || "none"
+        console.log("[hook] X op=" + op)
         if (op !== "none") {
           const val = (wh.getString("filter_text_match_value") || "").trim()
           if (val) {
@@ -87,11 +94,14 @@ onRecordAfterCreateSuccess((e) => {
           }
         }
       }
+      console.log("[hook] X pass=" + pass)
     } catch (fErr) {
       console.log("telegram_messages hook: filter error:", String(fErr))
       continue
     }
     if (!pass) continue
+
+    console.log("[hook] X calling $http.send to " + wh.getString("url"))
 
     // === INLINE: buildPayload (não pode ser helper top-level) ===
     const payload = JSON.stringify({
