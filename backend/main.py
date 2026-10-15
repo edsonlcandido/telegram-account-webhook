@@ -270,12 +270,13 @@ async def handle_new_message(event, session_id: str):
         # Monta o record mínimo (hook do PB lê o record e processa)
         sender_name = _sender_name(event)
         chat_title = _chat_title(event)
+        is_outgoing = bool(getattr(event, "outgoing", False))
         msg_data = {
             "session": pb_session_id,
             "chat_id": int(event.chat_id) if event.chat_id is not None else 0,
             "chat_type": _classify_chat_type(event),
             "chat_title": chat_title or "",
-            "direction": "outgoing" if event.outgoing else "incoming",
+            "direction": "outgoing" if is_outgoing else "incoming",
             "sender_id": int(event.sender_id) if event.sender_id is not None else 0,
             "sender_name": sender_name or "",
             "text": event.text or "",
@@ -354,7 +355,10 @@ def register_message_handler(client, session_id: str):
     async def handler(event):
         # Suprime mensagens enviadas por nós mesmos via /api/send-message
         # pra não gerar loop com o webhook receptor (ex: n8n respondendo).
-        if event.outgoing and _is_recently_sent(event.id):
+        # Usa getattr pq o `event.outgoing` nem sempre delega (depende
+        # da versão do Telethon — às vezes vem `Message has no attribute
+        # 'outgoing'` se o message for None ou partial).
+        if getattr(event, "outgoing", False) and _is_recently_sent(event.id):
             return
         await handle_new_message(event, session_id)
     logger.debug(f"📨 Handler NewMessage registrado para {session_id}")

@@ -86,11 +86,19 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   // 2) Lista webhooks ativos da sessão
+  // PB 0.40+ JSVM: findRecordsByFilter(collection, filter, sort, limit, offset, ...params)
+  // NÃO usar $app.findAllRecords({filter: ...}) (sintaxe antiga removida)
+  // NÃO usar $app.filter(...) (não existe)
   let webhooks
   try {
-    webhooks = $app.findAllRecords("telegram_webhooks", {
-      filter: $app.filter("session={:sid} && enabled=true", { sid: sessionRel }),
-    })
+    webhooks = $app.findRecordsByFilter(
+      "telegram_webhooks",
+      "session={:sid} && enabled=true",
+      "",
+      500,
+      0,
+      { sid: sessionRel },
+    )
   } catch (err) {
     console.log("telegram_messages hook: erro listando webhooks:", err)
     return
@@ -104,10 +112,6 @@ onRecordAfterCreateSuccess((e) => {
   // 3) Distribui pros webhooks que passam no filtro
   let delivered = 0
   let firstError = null
-  const body = JSON.stringify(buildPayload(msg, session, webhooks[0]))
-  // buildPayload é o mesmo shape pra todos os webhooks, mas os
-  // headers/dados por webhook vêm do record individual. Refaz o body
-  // dentro do loop pra incluir webhook_id/webhook_name corretos.
   for (const wh of webhooks) {
     if (!matchesFilters(msg, wh)) continue
 
@@ -126,11 +130,10 @@ onRecordAfterCreateSuccess((e) => {
     }
   }
 
-  // 4) Atualizar delivered_count/delivery_error no record.
-  // NOTA: o $app.dao().saveRecord aqui roda DENTRO da transação do
-  // AfterSuccess hook, então é descartado no commit (o INSERT inicial
-  // é o que persiste). Por isso só logamos o resultado em vez de
-  // persistir. O webhook forwarding funciona mesmo sem essa métrica.
+  // 4) Log do resultado. NÃO tentamos persistir delivered_count/delivery_error
+  // porque $app.dao().saveRecord dentro do AfterSuccess é descartado pela
+  // transação (só o INSERT original persiste). Webhook forwarding funciona
+  // mesmo sem essa métrica — o stdout do PB tem o resultado sempre.
   if (firstError) {
     console.log(
       "telegram_messages hook: msg=" + msg.id +
@@ -147,11 +150,4 @@ onRecordAfterCreateSuccess((e) => {
       " delivered=" + delivered,
     )
   }
-
-  console.log(
-    "telegram_messages hook: msg=" + msg.id +
-    " session=" + sessionRel +
-    " webhooks=" + webhooks.length +
-    " delivered=" + delivered,
-  )
 }, "telegram_messages")
