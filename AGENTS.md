@@ -134,6 +134,17 @@ Endpoints principais do FastAPI (Telegram service). Lista completa no README.
 | GET | /health | Health check (`active_sessions`, `saved_sessions`) |
 | GET | /api/admin/sessions | Debug — lista arquivos `/app/sessions/*.json` |
 
+**Schema do payload** que o `handle_new_message` envia pros webhooks (e que o `/api/webhooks/{id}/test` replica): ver seção "Webhook payload" no README. Estrutura de alto nível:
+
+- `event`: sempre `"telegram.message"`
+- `webhook_id` / `webhook_name`: identificação do webhook que recebeu
+- `session`: conta Telegram que recebeu/mandou (com `session.user` = própria conta)
+- `from`: quem mandou (User object completo; `null` se for canal)
+- `chat`: onde chegou (User/Group/Supergroup/Channel; `title` polimórfico)
+- `message`: a mensagem em si (campos legados + `reply_to_msg_id`)
+
+Detecção de direction (`incoming` vs `outgoing`) usa OR entre `event.outgoing` (Telethon) e `from.id == session.user.id` (cobre mensagens enviadas via outro client do mesmo user).
+
 ## Comandos
 
 ```bash
