@@ -115,8 +115,14 @@ onRecordAfterCreateSuccess((e) => {
   // 3) Distribui pros webhooks que passam no filtro
   let delivered = 0
   let firstError = null
+  console.log("[hook] starting loop, " + webhooks.length + " webhook(s)")
   for (const wh of webhooks) {
-    if (!matchesFilters(msg, wh)) continue
+    console.log("[hook] webhook " + wh.getString("name") + ", checking filters")
+    if (!matchesFilters(msg, wh)) {
+      console.log("[hook] filter FAILED, skip")
+      continue
+    }
+    console.log("[hook] filter OK, calling $http.send to " + wh.getString("url"))
 
     try {
       $http.send({
@@ -126,12 +132,14 @@ onRecordAfterCreateSuccess((e) => {
         body: JSON.stringify(buildPayload(msg, session, wh)),
         timeout: 10,
       })
+      console.log("[hook] $http.send returned OK")
       delivered++
     } catch (err) {
       if (!firstError) firstError = String(err).substring(0, 500)
-      console.log("telegram_messages hook: webhook falhou", wh.id, err)
+      console.log("[hook] $http.send FAILED: " + String(err))
     }
   }
+  console.log("[hook] loop done, delivered=" + delivered)
 
   // 4) Log do resultado. NÃO tentamos persistir delivered_count/delivery_error
   // porque $app.dao().saveRecord dentro do AfterSuccess é descartado pela
