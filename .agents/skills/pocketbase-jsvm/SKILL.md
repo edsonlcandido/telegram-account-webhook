@@ -123,6 +123,43 @@ String(resp.body).length         // returns byte count, NOT char count
 - **No hot-reload on Windows / Docker volume mounts.** PB on UNIX auto-restarts
   on `pb_hooks/*.pb.js` changes, but in a container the volume mount usually
   wins and you must restart the container.
+- **NÃO chame `e.next()` em hooks `onRecordAfter*Success` / `onRecordAfter*Error`.**
+  Só os hooks `*Execute` wrappam a operação e precisam de `e.next()` para
+  continuar. Os `*After*` rodam DEPOIS do save, o `e.next()` é no-op ou dá
+  erro silencioso. Sintoma: o hook "executa" (você vê o efeito no record
+  retornado pelo INSERT) mas o log do `console.log` que vem depois do
+  `e.next()` nunca aparece. **SOLUÇÃO:** remova o `e.next()` dos AfterHooks.
+  Bug que eu cometi em 2026-10-14 — me custou 3 commits até descobrir.
+- **Queries com filter: use `$app.findRecordsByFilter()` no PB 0.40+, NÃO
+  `$app.findAllRecords({filter: ...})` nem `$app.filter(...)`.** A sintaxe
+  antiga de passar objeto `{filter: "..."}` foi removida em 0.23+. E o
+  `$app.filter("session={:sid} && enabled=true", { sid })` **NÃO EXISTE** —
+  os params vão como último argumento posicional:
+  ```js
+  // CORRETO (PB 0.40+):
+  $app.findRecordsByFilter("telegram_webhooks",
+    "session={:sid} && enabled=true",
+    "",    // sort (vazio = ordem padrão)
+    500,   // limit
+    0,     // offset
+    { sid: sessionRel },  // dbx.Params
+  )
+  // ERRADO (sintaxe antiga removida):
+  $app.findAllRecords("telegram_webhooks", { filter: "..." })
+  // ERRADO (não existe):
+  $app.filter("session={:sid}", { sid })
+  ```
+  Sintoma do erro: `TypeError: Object has no member 'filter'` no stdout do PB,
+  query retorna vazia silenciosamente, webhook nunca dispara.
+- **`$app.dao().saveRecord()` DENTRO de `onRecordAfterCreateSuccess` é
+  descartado pela transação.** O save inicial (INSERT) persiste. O saveRecord
+  no hook é feito dentro da mesma transação, e no commit o PB só persiste
+  o INSERT — qualquer modificação subsequente via `dao().saveRecord` é
+  revertida. **SOLUÇÃO:** se precisar atualizar um campo do record criado
+  (ex: `delivered_count`, `status`), use o hook `onRecordUpdateExecute` em
+  vez de AfterSuccess, OU faça um POST/PATCH separado via API após o INSERT.
+  Para logs/efeitos colaterais, o AfterSuccess funciona normal. Bug que eu
+  cometi em 2026-10-14 — gastei 2 commits achando que o save não persistia.
 
 ## v0.23 Dao migration (don't write pre-0.23 code)
 
@@ -247,13 +284,25 @@ or any `/api/*` endpoint to verify the hook is registered and the proxy works.
    final response). One log per `// -------- N. --------` section. The missing
    log tells you which step blew up.
 5. **Common errors:**
-   - `Object has no member 'dao'` → wrote pre-v0.23 code.
+   - `Object has no member 'dao'` → wrote pre-v0.23 code. OR tried to use
+     `dao().saveRecord()` inside AfterSuccess (works in v0.22, dropped in
+     v0.23 — use `$app.save()` directly OR avoid the save entirely).
+   - `Object has no member 'filter'` → tried `$app.filter("...")` which doesn't
+     exist. Use `$app.findRecordsByFilter(coll, filter, sort, limit, offset, params)`.
    - `TypeError: Object has no member 'substring'` and the input came from
      `$http.send().body` → concatenating a `Uint8Array` (>=0.27).
    - `$tokens is not defined` → use `record.newAuthToken()` instead.
    - `BadRequestError` thrown but PB still returns 500 → check the message
      isn't an object; PB stringifies `message` and serializes the second arg
      as `data` in the JSON response.
+   - **Hook `onRecordAfter*Success` parece "executar" mas o log do body
+     nunca aparece** → você provavelmente chamou `e.next()` no início. Os
+     AfterSuccess NÃO wrappam a operação (já é "after success"), `e.next()`
+     é no-op ou dá erro silencioso. Remova o `e.next()`.
+   - **`$app.dao().saveRecord()` no AfterSuccess parece não persistir** →
+     o save é descartado pela transação. Aí o INSERT original persiste, mas
+     qualquer modificação do record no hook é revertida. Use `onRecordUpdateExecute`
+     se precisar modificar, OU não salve o record no AfterSuccess.
 
 ## Migrations (this project)
 

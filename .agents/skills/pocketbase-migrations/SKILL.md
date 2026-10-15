@@ -72,6 +72,41 @@ By type:
 | `url` | `exceptDomains`, `onlyDomains`, `required` |
 | `bool` | `required` |
 | `select` | `values: string[]`, `maxSelect`, `required` |
+
+## Rule 3 — Record queries em JS migrations (PB 0.40+)
+
+`findAllRecords(collection, { filter: "..." })` e `$app.filter(...)` **NÃO
+EXISTEM** no PB 0.40+ JSVM. As funções disponíveis:
+
+```js
+// 1) Sem filter: traz TUDO
+const all = app.findAllRecords("telegram_sessions")
+
+// 2) Com dbx expressions (variádico, não objeto):
+app.findAllRecords("telegram_webhooks",
+  dbx.NewExp("session = {:sid}", { sid: "abc" })
+)
+// Ou com HashExp pra equality:
+app.findAllRecords("telegram_webhooks",
+  dbx.HashExp({ enabled: true, name: "foo" })
+)
+
+// 3) Com string filter e params no final:
+app.findRecordsByFilter("telegram_webhooks",
+  "session = {:sid} && enabled = true",
+  "",      // sort (vazio = padrão)
+  500,     // limit
+  0,       // offset
+  { sid: "abc" }  // dbx.Params
+)
+```
+
+**Sintoma do erro:** query retorna `[]` silenciosamente (sem throw) OU
+`TypeError: Object has no member 'filter'`. A migração parece aplicar
+mas não faz o trabalho de migration de dados. **Sempre teste com
+`sqlite3 pb_data/data.db "SELECT * FROM ..."` pra confirmar que os
+dados foram migrados.** Bug que eu cometi em 2026-10-14 nos exemplos
+desta skill — corrigido em 2026-10-14 também.
 | `relation` | `collectionId`, `cascadeDelete`, `minSelect`, `maxSelect`, `required` |
 
 ## Adding a field to an existing collection
