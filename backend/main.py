@@ -382,20 +382,53 @@ def _sender_name(event) -> str | None:
     return full or None
 
 
-def _sender_username(event) -> str:
+async def _sender_username(event) -> str:
     """@username do sender no Telegram (sem o @), ou string vazia.
 
     Vem vazio se:
     - Sender é um canal (canais usam channel username, não user)
     - User não tem @username configurado
     - event.sender ausente (msg anônima)
+    - API do Telegram recusou (user bloqueado, sem permissão, etc)
+
+    Estratégia (tenta em ordem, retorna o primeiro que achar):
+    1) `event.sender.username` — Telethon cacheia quando abre a conversa.
+    2) `event.chat.username` — em chat privado, `event.chat` É o outro
+       user, então é mais confiável que `event.sender` (que pode vir
+       com User object incompleto se o cache do Telethon tá frio).
+    3) `await client.get_entity(sender_id)` — fallback assíncrono via
+       API do Telegram. Funciona se o user já interagiu com a conta
+       monitorada (Telethon tem access_hash em cache).
     """
+    # 1) Sender direto
     sender = getattr(event, "sender", None)
-    if not sender:
-        return ""
-    # O getter `username` em Telethon lida com a ausência, mas protege
-    # por garantia.
-    return getattr(sender, "username", None) or ""
+    if sender:
+        u = getattr(sender, "username", None)
+        if u:
+            return u
+
+    # 2) Em chat privado, chat É o user — checa essa fonte
+    if getattr(event, "is_private", False):
+        chat = getattr(event, "chat", None)
+        if chat:
+            u = getattr(chat, "username", None)
+            if u:
+                return u
+
+    # 3) Fallback: busca via API do Telegram
+    sender_id = getattr(event, "sender_id", None)
+    client = getattr(event, "client", None)
+    if sender_id and client:
+        try:
+            full = await client.get_entity(sender_id)
+            if full:
+                u = getattr(full, "username", None)
+                if u:
+                    return u
+        except Exception as e:
+            logger.debug(f"sender_username fallback fetch falhou: {e}")
+
+    return ""
 
 
 async def handle_new_message(event, session_id: str):
@@ -465,7 +498,7 @@ async def handle_new_message(event, session_id: str):
 
         # 2) Extrai metadados da mensagem
         sender_name = _sender_name(event) or ""
-        sender_username = _sender_username(event)
+        sender_username = await _sender_username(event)
         chat_title = _chat_title(event) or ""
         is_outgoing = bool(getattr(event, "outgoing", False))
         direction = "outgoing" if is_outgoing else "incoming"
