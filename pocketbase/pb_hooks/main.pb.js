@@ -11,110 +11,34 @@ routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", true))
 // Webhook forwarding: quando o FastAPI insere em `telegram_messages`,
 // este hook distribui pros webhooks ativos da sessão, aplicando os filtros.
 // Tudo roda DENTRO do PB — sem auth, sem HTTP hop extra pro FastAPI, sem
-// problemas de propagação de token. Resolve o bug do `_get_active_webhooks`
-// que não conseguia listar sem user context.
+// problemas de propagação de token.
+//
+// GOTCHA: o PB 0.40+ JSVM não enxerga funções helper top-level dentro
+// de handlers. `matchesFilters` e `buildPayload` PRECISAM estar inline
+// (declaradas dentro do corpo do hook), senão dá "ReferenceError: X is
+// not defined" no runtime. A skill pocketbase-jsvm tem mais detalhes.
 // =============================================================================
-
-/**
- * Verifica se uma mensagem passa pelos filtros do webhook.
- * Retorna true se o webhook deve receber a mensagem.
- */
-function matchesFilters(msg, wh) {
-  // direction: all / incoming / outgoing
-  const dir = wh.getString("filter_direction") || "all"
-  if (dir !== "all" && dir !== msg.getString("direction")) {
-    console.log("[hook] direction filter FAIL dir=" + dir)
-    return false
-  }
-  console.log("[hook] direction filter OK dir=" + dir)
-
-  // chat_type: all / private / group / supergroup / channel / unknown
-  const ct = wh.getString("filter_chat_type") || "all"
-  if (ct !== "all" && ct !== msg.getString("chat_type")) {
-    console.log("[hook] chat_type filter FAIL ct=" + ct)
-    return false
-  }
-  console.log("[hook] chat_type filter OK ct=" + ct)
-
-  // text_match: none / equals / contains
-  const op = wh.getString("filter_text_match_operator") || "none"
-  if (op === "none") {
-    console.log("[hook] text op=none, PASS")
-    return true
-  }
-  const val = (wh.getString("filter_text_match_value") || "").trim()
-  if (!val) {
-    console.log("[hook] text op=" + op + " val empty, PASS")
-    return true
-  }
-  const text = (msg.getString("text") || "").toLowerCase()
-  const needle = val.toLowerCase()
-  if (op === "equals") {
-    const result = text === needle
-    console.log("[hook] text equals: " + result)
-    return result
-  }
-  if (op === "contains") {
-    const result = text.indexOf(needle) !== -1
-    console.log("[hook] text contains: " + result)
-    return result
-  }
-  return true
-}
-
-/**
- * Monta o payload JSON enviado pro webhook receptor (n8n, etc).
- */
-function buildPayload(msg, session, wh) {
-  return {
-    event: "telegram.message",
-    webhook_id: wh.id,
-    webhook_name: wh.getString("name"),
-    session: {
-      pb_id: session.id,
-      session_id: session.getString("session_id"),
-      phone: session.getString("phone"),
-      name: session.getString("name") || "",
-    },
-    message: {
-      id: msg.id,
-      chat_id: msg.getNumber("chat_id"),
-      chat_type: msg.getString("chat_type"),
-      chat_title: msg.getString("chat_title") || "",
-      direction: msg.getString("direction"),
-      sender_id: msg.getNumber("sender_id"),
-      sender_name: msg.getString("sender_name") || "",
-      text: msg.getString("text") || "",
-      timestamp: msg.getString("created"),
-    },
-  }
-}
 
 onRecordAfterCreateSuccess((e) => {
   // O record JÁ foi salvo quando esse hook dispara (é "AfterSuccess").
-  // Fazemos o trabalho de distribuir pros webhooks e atualizar o record
-  // com o resultado. Se o save inicial falhar, esse hook não é chamado.
+  // Fazemos o trabalho de distribuir pros webhooks. Se o save inicial
+  // falhar, esse hook não é chamado.
 
-  // === DEBUG: cada etapa loga uma linha pra isolar onde trava ===
-  console.log("[hook] START id=" + e.record.id)
   const msg = e.record
   const sessionRel = msg.getString("session")
-  console.log("[hook] sessionRel=" + sessionRel)
 
   // 1) Acha a sessão
   let session
   try {
     session = $app.findRecordById("telegram_sessions", sessionRel)
-    console.log("[hook] session found, name=" + session.getString("name"))
   } catch (err) {
-    console.log("[hook] SESSION ERROR: " + String(err))
+    console.log("telegram_messages hook: sessão não encontrada:", String(err))
     return
   }
 
-  // 2) Lista webhooks
+  // 2) Lista webhooks ativos da sessão
   let webhooks
   try {
-    console.log("[hook] calling findRecordsByFilter")
     webhooks = $app.findRecordsByFilter(
       "telegram_webhooks",
       "session={:sid} && enabled=true",
@@ -123,9 +47,8 @@ onRecordAfterCreateSuccess((e) => {
       0,
       { sid: sessionRel },
     )
-    console.log("[hook] findRecordsByFilter OK, count=" + (webhooks ? webhooks.length : -1))
   } catch (err) {
-    console.log("[hook] FILTER ERROR: " + String(err))
+    console.log("telegram_messages hook: erro listando webhooks:", String(err))
     return
   }
 
@@ -137,63 +60,95 @@ onRecordAfterCreateSuccess((e) => {
   // 3) Distribui pros webhooks que passam no filtro
   let delivered = 0
   let firstError = null
-  console.log("[hook] B")
   for (let i = 0; i < webhooks.length; i++) {
     const wh = webhooks[i]
-    console.log("[hook] C webhook " + i + " name=" + (wh ? wh.getString("name") : "null"))
-    if (!wh) {
-      console.log("[hook] D null wh, skip")
-      continue
-    }
-    let pass = false
-    try {
-      pass = matchesFilters(msg, wh)
-      console.log("[hook] E filter pass=" + pass)
-    } catch (fErr) {
-      console.log("[hook] E filter THROW: " + String(fErr))
-      continue
-    }
-    if (!pass) {
-      console.log("[hook] F filter blocked, skip")
-      continue
-    }
+    if (!wh) continue
 
-    console.log("[hook] G calling $http.send to " + wh.getString("url"))
+    // === INLINE: matchesFilters (não pode ser helper top-level) ===
+    let pass = true
+    try {
+      const dir = wh.getString("filter_direction") || "all"
+      if (dir !== "all" && dir !== msg.getString("direction")) pass = false
+
+      if (pass) {
+        const ct = wh.getString("filter_chat_type") || "all"
+        if (ct !== "all" && ct !== msg.getString("chat_type")) pass = false
+      }
+
+      if (pass) {
+        const op = wh.getString("filter_text_match_operator") || "none"
+        if (op !== "none") {
+          const val = (wh.getString("filter_text_match_value") || "").trim()
+          if (val) {
+            const text = (msg.getString("text") || "").toLowerCase()
+            const needle = val.toLowerCase()
+            if (op === "equals") pass = (text === needle)
+            else if (op === "contains") pass = (text.indexOf(needle) !== -1)
+          }
+        }
+      }
+    } catch (fErr) {
+      console.log("telegram_messages hook: filter error:", String(fErr))
+      continue
+    }
+    if (!pass) continue
+
+    // === INLINE: buildPayload (não pode ser helper top-level) ===
+    const payload = JSON.stringify({
+      event: "telegram.message",
+      webhook_id: wh.id,
+      webhook_name: wh.getString("name"),
+      session: {
+        pb_id: session.id,
+        session_id: session.getString("session_id"),
+        phone: session.getString("phone"),
+        name: session.getString("name") || "",
+      },
+      message: {
+        id: msg.id,
+        chat_id: msg.getNumber("chat_id"),
+        chat_type: msg.getString("chat_type"),
+        chat_title: msg.getString("chat_title") || "",
+        direction: msg.getString("direction"),
+        sender_id: msg.getNumber("sender_id"),
+        sender_name: msg.getString("sender_name") || "",
+        text: msg.getString("text") || "",
+        timestamp: msg.getString("created"),
+      },
+    })
+
+    // 4) POST pro webhook receptor
     try {
       const resp = $http.send({
         url: wh.getString("url"),
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload(msg, session, wh)),
+        body: payload,
         timeout: 10,
       })
-      console.log("[hook] H send returned status=" + resp.status)
       delivered++
+      console.log(
+        "telegram_messages hook: delivered msg=" + msg.id +
+        " webhook=" + wh.id +
+        " status=" + resp.status,
+      )
     } catch (err) {
       if (!firstError) firstError = String(err).substring(0, 500)
-      console.log("[hook] H send FAILED: " + String(err))
+      console.log(
+        "telegram_messages hook: webhook FAILED msg=" + msg.id +
+        " webhook=" + wh.id +
+        " err=" + String(err).substring(0, 200),
+      )
     }
   }
-  console.log("[hook] I loop done, delivered=" + delivered)
 
-  // 4) Log do resultado. NÃO tentamos persistir delivered_count/delivery_error
-  // porque $app.dao().saveRecord dentro do AfterSuccess é descartado pela
-  // transação (só o INSERT original persiste). Webhook forwarding funciona
-  // mesmo sem essa métrica — o stdout do PB tem o resultado sempre.
-  if (firstError) {
-    console.log(
-      "telegram_messages hook: msg=" + msg.id +
-      " session=" + sessionRel +
-      " webhooks=" + webhooks.length +
-      " delivered=" + delivered +
-      " firstError=" + firstError,
-    )
-  } else {
-    console.log(
-      "telegram_messages hook: msg=" + msg.id +
-      " session=" + sessionRel +
-      " webhooks=" + webhooks.length +
-      " delivered=" + delivered,
-    )
-  }
+  // 5) Log final. NÃO tentamos persistir delivered_count/delivery_error
+  // porque $app.dao().saveRecord no AfterSuccess é descartado pela transação.
+  console.log(
+    "telegram_messages hook: msg=" + msg.id +
+    " session=" + sessionRel +
+    " webhooks=" + webhooks.length +
+    " delivered=" + delivered +
+    (firstError ? " firstError=" + firstError : ""),
+  )
 }, "telegram_messages")
