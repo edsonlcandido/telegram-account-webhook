@@ -137,31 +137,44 @@ onRecordAfterCreateSuccess((e) => {
   // 3) Distribui pros webhooks que passam no filtro
   let delivered = 0
   let firstError = null
-  console.log("[hook] starting loop, " + webhooks.length + " webhook(s)")
-  for (const wh of webhooks) {
-    console.log("[hook] webhook " + wh.getString("name") + ", checking filters")
-    if (!matchesFilters(msg, wh)) {
-      console.log("[hook] filter FAILED, skip")
+  console.log("[hook] B")
+  for (let i = 0; i < webhooks.length; i++) {
+    const wh = webhooks[i]
+    console.log("[hook] C webhook " + i + " name=" + (wh ? wh.getString("name") : "null"))
+    if (!wh) {
+      console.log("[hook] D null wh, skip")
       continue
     }
-    console.log("[hook] filter OK, calling $http.send to " + wh.getString("url"))
-
+    let pass = false
     try {
-      $http.send({
+      pass = matchesFilters(msg, wh)
+      console.log("[hook] E filter pass=" + pass)
+    } catch (fErr) {
+      console.log("[hook] E filter THROW: " + String(fErr))
+      continue
+    }
+    if (!pass) {
+      console.log("[hook] F filter blocked, skip")
+      continue
+    }
+
+    console.log("[hook] G calling $http.send to " + wh.getString("url"))
+    try {
+      const resp = $http.send({
         url: wh.getString("url"),
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildPayload(msg, session, wh)),
         timeout: 10,
       })
-      console.log("[hook] $http.send returned OK")
+      console.log("[hook] H send returned status=" + resp.status)
       delivered++
     } catch (err) {
       if (!firstError) firstError = String(err).substring(0, 500)
-      console.log("[hook] $http.send FAILED: " + String(err))
+      console.log("[hook] H send FAILED: " + String(err))
     }
   }
-  console.log("[hook] loop done, delivered=" + delivered)
+  console.log("[hook] I loop done, delivered=" + delivered)
 
   // 4) Log do resultado. NÃO tentamos persistir delivered_count/delivery_error
   // porque $app.dao().saveRecord dentro do AfterSuccess é descartado pela
