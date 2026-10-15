@@ -22,21 +22,43 @@ routerAdd("GET", "/app/{path...}", $apis.static("pb_public/app", true))
 function matchesFilters(msg, wh) {
   // direction: all / incoming / outgoing
   const dir = wh.getString("filter_direction") || "all"
-  if (dir !== "all" && dir !== msg.getString("direction")) return false
+  if (dir !== "all" && dir !== msg.getString("direction")) {
+    console.log("[hook] direction filter FAIL dir=" + dir)
+    return false
+  }
+  console.log("[hook] direction filter OK dir=" + dir)
 
   // chat_type: all / private / group / supergroup / channel / unknown
   const ct = wh.getString("filter_chat_type") || "all"
-  if (ct !== "all" && ct !== msg.getString("chat_type")) return false
+  if (ct !== "all" && ct !== msg.getString("chat_type")) {
+    console.log("[hook] chat_type filter FAIL ct=" + ct)
+    return false
+  }
+  console.log("[hook] chat_type filter OK ct=" + ct)
 
   // text_match: none / equals / contains
   const op = wh.getString("filter_text_match_operator") || "none"
-  if (op === "none") return true
+  if (op === "none") {
+    console.log("[hook] text op=none, PASS")
+    return true
+  }
   const val = (wh.getString("filter_text_match_value") || "").trim()
-  if (!val) return true // operator set but empty value = no filter
+  if (!val) {
+    console.log("[hook] text op=" + op + " val empty, PASS")
+    return true
+  }
   const text = (msg.getString("text") || "").toLowerCase()
   const needle = val.toLowerCase()
-  if (op === "equals") return text === needle
-  if (op === "contains") return text.indexOf(needle) !== -1
+  if (op === "equals") {
+    const result = text === needle
+    console.log("[hook] text equals: " + result)
+    return result
+  }
+  if (op === "contains") {
+    const result = text.indexOf(needle) !== -1
+    console.log("[hook] text contains: " + result)
+    return result
+  }
   return true
 }
 
