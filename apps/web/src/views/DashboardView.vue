@@ -3,35 +3,36 @@
     <!-- Navigation -->
     <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16">
-          <div class="flex items-center">
-            <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+        <div class="flex justify-between h-16 gap-2">
+          <div class="flex items-center min-w-0">
+            <h1 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent truncate">
               Dashboard
             </h1>
           </div>
-          <div class="flex items-center gap-4">
+          <div class="flex items-center gap-2 sm:gap-3">
             <router-link
               to="/docs"
-              class="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+              class="inline-flex items-center px-2 py-2 sm:px-3 text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
               title="Documentação da API"
             >
-              <svg class="h-5 w-5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-5 w-5 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              Docs
+              <span class="hidden sm:inline">Docs</span>
             </router-link>
-            <div class="flex items-center gap-3 px-4 py-2 bg-gradient-to-r from-blue-50 to-purple-50 rounded-full">
-              <div class="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full flex items-center justify-center">
-                <UserCircleIcon class="h-5 w-5 text-white" />
+            <div class="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-blue-50 to-purple-50 rounded-full">
+              <div class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+                <UserCircleIcon class="h-4 w-4 sm:h-5 sm:w-5 text-white" />
               </div>
-              <span class="text-sm font-semibold text-gray-700">{{ userName }}</span>
+              <span class="hidden sm:inline text-sm font-semibold text-gray-700 truncate max-w-[8rem]">{{ userName }}</span>
             </div>
             <button
               @click="handleLogout"
-              class="group inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all transform hover:scale-105 shadow-lg"
+              class="group inline-flex items-center px-2 py-2 sm:px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all transform hover:scale-105 shadow-lg"
+              title="Sair"
             >
-              <ArrowRightOnRectangleIcon class="h-5 w-5 mr-2 group-hover:translate-x-1 transition-transform" />
-              Sair
+              <ArrowRightOnRectangleIcon class="h-5 w-5 sm:mr-2 group-hover:translate-x-1 transition-transform" />
+              <span class="hidden sm:inline">Sair</span>
             </button>
           </div>
         </div>
@@ -43,17 +44,17 @@
       <!-- Welcome Section -->
       <div class="px-4 py-6 sm:px-0">
         <div class="bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 overflow-hidden shadow-2xl rounded-2xl transform hover:scale-[1.02] transition-all">
-          <div class="p-8 text-white">
-            <div class="flex items-center justify-between">
-              <div>
-                <h2 class="text-3xl md:text-4xl font-bold mb-3">
+          <div class="p-5 sm:p-8 text-white">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <h2 class="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 sm:mb-3 truncate">
                   Olá, {{ userName }}! 👋
                 </h2>
-                <p class="text-blue-100 text-lg">
+                <p class="text-blue-100 text-sm sm:text-base md:text-lg">
                   Gerencie suas contas Telegram e webhooks
                 </p>
               </div>
-              <div class="hidden md:block">
+              <div class="hidden md:block flex-shrink-0">
                 <div class="w-24 h-24 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center">
                   <span class="text-6xl">📱</span>
                 </div>
@@ -161,9 +162,9 @@
       <!-- Accounts Section -->
       <div class="px-4 py-6 sm:px-0">
         <div class="bg-white shadow-2xl rounded-2xl border border-gray-100">
-          <div class="px-6 py-6 border-b border-gray-100 flex items-center justify-between">
-            <div>
-              <h3 class="text-2xl font-bold text-gray-900 flex items-center">
+          <div class="px-4 py-5 sm:px-6 sm:py-6 border-b border-gray-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <h3 class="text-xl sm:text-2xl font-bold text-gray-900 flex items-center">
                 <span class="mr-3">📱</span>
                 Contas Telegram
               </h3>
@@ -171,7 +172,7 @@
             </div>
             <button
               @click="router.push('/add-telegram')"
-              class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all transform hover:scale-105 shadow-lg"
+              class="w-full sm:w-auto inline-flex items-center justify-center px-5 py-2.5 sm:px-6 sm:py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all transform hover:scale-105 shadow-lg text-sm sm:text-base"
             >
               <PlusIcon class="h-5 w-5 mr-2" />
               Adicionar Conta
@@ -206,19 +207,19 @@
             <div
               v-for="session in telegramStore.sessions"
               :key="session.session_id"
-              class="p-6 hover:bg-gray-50 transition-colors"
+              class="p-4 sm:p-6 hover:bg-gray-50 transition-colors"
             >
-              <div class="flex items-center justify-between">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <!-- Account Info -->
-                <div class="flex items-center gap-4 min-w-0 flex-1">
+                <div class="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                   <!-- Avatar (sempre últimos 4 dígitos do telefone) -->
-                  <div class="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-xl font-bold flex-shrink-0">
+                  <div class="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-base sm:text-xl font-bold flex-shrink-0">
                     {{ session.phone.slice(-4) }}
                   </div>
 
                   <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2">
-                      <p class="font-semibold text-gray-900 truncate">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <p class="font-semibold text-gray-900 truncate text-sm sm:text-base">
                         {{ session.name || formatPhone(session.phone) }}
                       </p>
                       <button
@@ -231,8 +232,8 @@
                         </svg>
                       </button>
                     </div>
-                    <p v-if="session.name" class="text-xs text-gray-500 mt-0.5">{{ formatPhone(session.phone) }}</p>
-                    <div class="flex items-center gap-2 mt-1">
+                    <p v-if="session.name" class="text-xs text-gray-500 mt-0.5 truncate">{{ formatPhone(session.phone) }}</p>
+                    <div class="flex items-center gap-2 mt-1 flex-wrap">
                       <span
                         class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
                         :class="session.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
@@ -250,41 +251,41 @@
                   </div>
                 </div>
 
-                <!-- Actions -->
-                <div class="flex items-center gap-3 flex-shrink-0">
+                <!-- Actions — empilha no mobile, inline no sm+ -->
+                <div class="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:gap-3 sm:flex-shrink-0">
                   <button
                     @click="router.push(`/webhooks/${session.session_id}`)"
-                    class="inline-flex items-center px-4 py-2 border border-blue-300 text-blue-600 font-medium rounded-lg hover:bg-blue-50 transition-colors"
+                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-blue-300 text-blue-600 font-medium rounded-lg hover:bg-blue-50 transition-colors text-xs sm:text-sm"
                     :title="session.webhook_count > 0 ? 'Gerenciar webhooks' : 'Configurar primeiro webhook'"
                   >
-                    <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="h-4 w-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
-                    Webhooks
+                    <span class="hidden sm:inline">Webhooks</span>
                   </button>
 
                   <button
                     @click="openSendModal(session)"
-                    class="inline-flex items-center px-4 py-2 border border-green-300 text-green-600 font-medium rounded-lg hover:bg-green-50 transition-colors"
+                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-green-300 text-green-600 font-medium rounded-lg hover:bg-green-50 transition-colors text-xs sm:text-sm"
                     :disabled="!session.active"
                     :title="session.active ? 'Enviar mensagem' : 'Sessão offline'"
                     :class="{ 'opacity-50 cursor-not-allowed': !session.active }"
                   >
-                    <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="h-4 w-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                     </svg>
-                    Mensagem
+                    <span class="hidden sm:inline">Mensagem</span>
                   </button>
 
                   <button
                     @click="confirmDelete(session)"
-                    class="inline-flex items-center px-4 py-2 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors"
+                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors text-xs sm:text-sm"
                     title="Remover conta"
                   >
-                    <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="h-4 w-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
-                    Remover
+                    <span class="hidden sm:inline">Remover</span>
                   </button>
                 </div>
               </div>
