@@ -742,10 +742,13 @@ async def handle_new_message(event, session_id: str):
             webhooks = r.json().get("items", [])
 
         # 5) Filtra e distribui
-        # Anti-loop: se a mensagem foi enviada por NÓS mesmos via
-        # /api/send-message nos últimos 10s, suprime o POST mas a
-        # audit INSERT em `telegram_messages` continua normal.
-        skip_forwarding = _is_recently_sent(event.id)
+        # Anti-loop + dedupe: se a mensagem foi enviada por NÓS mesmos
+        # via /api/send-message nos últimos 10s, suprime o POST pros
+        # webhooks E o INSERT em `telegram_messages` (o INSERT é feito
+        # direto pelo endpoint pra garantir que aparece na página
+        # mesmo quando o handler do Telethon não dispara o evento
+        # outgoing — cenário comum após boot ou chat novo).
+        skip_everything = _is_recently_sent(event.id)
         delivered = 0
         failed = 0
         for wh in webhooks:
@@ -774,9 +777,9 @@ async def handle_new_message(event, session_id: str):
                     if op == "contains" and needle not in haystack:
                         continue
 
-            # Anti-loop: pular o POST (mas o audit INSERT já foi
-            # feito, ou vai ser feito depois).
-            if skip_forwarding:
+            # Anti-loop: pular o POST (o audit INSERT é responsabilidade
+            # do endpoint /api/send-message; aqui só evita duplicar).
+            if skip_everything:
                 continue
 
             url = wh.get("url")
@@ -845,29 +848,34 @@ async def handle_new_message(event, session_id: str):
 
         # 6) INSERT em telegram_messages (audit log). Hook do PB é no-op
         # então não dispara forwarding duplicado.
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
-                    json={
-                        "session": pb_session_id,
-                        "chat_id": int(event.chat_id or 0),
-                        "chat_type": chat_type,
-                        "chat_title": chat_title,
-                        "direction": direction,
-                        "sender_id": int(event.sender_id or 0),
-                        "sender_name": sender_name,
-                        "sender_username": sender_username,
-                        "text": text,
-                    },
-                    headers=headers,
-                )
-            if r.status_code >= 300:
-                logger.warning(
-                    f"PB recusou INSERT audit msg: {r.status_code} {r.text[:200]}"
-                )
-        except Exception as e:
-            logger.error(f"Erro fazendo INSERT audit de msg no PB: {e}")
+        #
+        # Se a mensagem foi enviada por NÓS mesmos via /api/send-message
+        # (skip_everything == True), o INSERT já foi feito direto pelo
+        # endpoint — pula aqui pra não duplicar.
+        if not skip_everything:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(
+                        f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
+                        json={
+                            "session": pb_session_id,
+                            "chat_id": int(event.chat_id or 0),
+                            "chat_type": chat_type,
+                            "chat_title": chat_title,
+                            "direction": direction,
+                            "sender_id": int(event.sender_id or 0),
+                            "sender_name": sender_name,
+                            "sender_username": sender_username,
+                            "text": text,
+                        },
+                        headers=headers,
+                    )
+                if r.status_code >= 300:
+                    logger.warning(
+                        f"PB recusou INSERT audit msg: {r.status_code} {r.text[:200]}"
+                    )
+            except Exception as e:
+                logger.error(f"Erro fazendo INSERT audit de msg no PB: {e}")
 
     except Exception as e:
         logger.error(f"Erro ao processar mensagem: {e}")
@@ -908,11 +916,16 @@ def register_message_handler(client, session_id: str):
     nunca dispara ao receber mensagem em contas recém-criadas.
 
     Captura TANTO incoming (mensagens de outros) QUANTO outgoing (mensagens
-    enviadas pela própria conta — pelo celular, desktop, web Telegram). O
+    enviadas pela própria conta pelo celular/desktop/web Telegram). O
     payload inclui `outgoing: bool` pra o consumidor filtrar como quiser.
 
-    Mensagens enviadas via nosso próprio /api/send-message são suprimidas
-    via _is_recently_sent() pra evitar loop com o webhook.
+    Mensagens enviadas via nosso próprio /api/send-message são
+    detectadas via `_is_recently_sent(event.id)` (cache setado pelo
+    endpoint logo após o send_message retornar). Nesse caso, o
+    `handle_new_message` SUPRIME tanto o POST pros webhooks quanto o
+    INSERT em `telegram_messages` — o INSERT é feito direto pelo
+    endpoint pra garantir que aparece na UI mesmo quando o Telethon
+    não dispara o evento outgoing (comum após boot ou pra chat novo).
 
     NOTA: precisa ser `def` (não `async def`) porque não há `await`
     dentro. Se fosse `async def` chamado sem `await`, retornaria uma
@@ -920,13 +933,6 @@ def register_message_handler(client, session_id: str):
     """
     @client.on(NewMessage())
     async def handler(event):
-        # NÃO suprime aqui — queremos que TODA mensagem (incluindo as
-        # que nós mesmos enviamos via /api/send-message) seja inserida
-        # em `telegram_messages` (audit log completo). A supressão
-        # pra evitar loop com o receptor do webhook (ex: n8n
-        # respondendo às nossas mensagens) acontece DENTRO do
-        # `handle_new_message`, no loop de webhooks (skip só do
-        # POST, não do audit).
         await handle_new_message(event, session_id)
     logger.info(f"📨 Handler NewMessage registrado para {session_id}")
 
@@ -1831,6 +1837,130 @@ async def _download_and_prepare_image(url: str) -> bytes:
     return out.getvalue()
 
 
+async def _audit_outgoing_message(
+    client: TelegramClient,
+    sent,
+    session_id: str,
+    text: str,
+    has_image: bool,
+) -> None:
+    """INSERT em `telegram_messages` pra mensagem enviada via /api/send-message.
+
+    Garante que a mensagem aparece na página de Mensagens mesmo quando
+    o handler `NewMessage` do Telethon NÃO dispara pra outgoing (cenário
+    comum após boot, restart, ou quando o chat não tem entity em cache
+    ainda — Telethon só dispara `NewMessage` outgoing pra chats já
+    conhecidos e em momentos em que o `updates` handler tá ativo).
+    Se o handler disparar depois, ele detecta via `_is_recently_sent()`
+    e pula o próprio INSERT — sem duplicação.
+
+    Fluxo:
+    1) Garante `_PB_SERVICE_TOKEN` (lazy refresh + auto-refresh).
+    2) Resolve `pb_id` da sessão (1 GET) — ancora a mensagem na sessão.
+    3) Resolve peer info (chat_type/chat_title) via `client.get_entity`.
+       Usa `sent.chat_id` (já normalizado pelo Telethon) — cache hit em
+       chats conhecidos.
+    4) Resolve self user (sender_id/username) via `client.get_me()`.
+       Telethon cacheia internamente; sem round-trip repetido.
+    5) POST em `telegram_messages` com direction="outgoing". O `text`
+       é o caption quando foi foto, ou o body puro quando foi texto.
+
+    Falhas em qualquer passo são re-levantadas (RuntimeError) — o caller
+    decide se swallow (no /api/send-message: sim, a entrega pro Telegram
+    já foi feita e perder o audit é recoverable, só perdemos a entrada
+    na página de Mensagens).
+    """
+    await _ensure_pb_service_token()
+    headers = pb_service_headers()
+
+    # 2) Lookup do pb_id da sessão
+    async with httpx.AsyncClient(timeout=10.0) as http:
+        r = await http.get(
+            f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+            params={"filter": f'session_id="{session_id}"', "perPage": 1},
+            headers=headers,
+        )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"PB lookup sessão {session_id} falhou: {r.status_code}"
+        )
+    items = r.json().get("items", [])
+    if not items:
+        raise RuntimeError(
+            f"sessão {session_id} não cadastrada no PB (audit sem anchor)"
+        )
+    pb_session_id = items[0]["id"]
+
+    # 3) Resolve peer. `sent.chat_id` é int já normalizado pelo Telethon
+    # (negativo pra groups/channels). Usa-o pra hit no cache de entity.
+    try:
+        entity = await client.get_entity(sent.chat_id)
+    except Exception as e:
+        logger.info(
+            f"_audit_outgoing_message: get_entity({sent.chat_id}) falhou: {e}"
+        )
+        entity = None
+    if entity:
+        chat_type = _classify_chat_type_from_entity(entity)
+        chat_title = getattr(entity, "title", None) or ""
+        if not chat_title:
+            chat_title = (
+                f"{getattr(entity, 'first_name', '') or ''} "
+                f"{getattr(entity, 'last_name', '') or ''}"
+            ).strip()
+    else:
+        chat_type = "unknown"
+        chat_title = ""
+
+    # 4) Self user. `get_me()` é cacheado internamente — chamar aqui é
+    # barato mesmo dentro do hot path.
+    try:
+        me = await client.get_me()
+    except Exception as e:
+        logger.info(f"_audit_outgoing_message: get_me() falhou: {e}")
+        me = None
+    if me:
+        sender_id = int(getattr(me, "id", 0) or 0)
+        sender_name = (
+            f"{getattr(me, 'first_name', '') or ''} "
+            f"{getattr(me, 'last_name', '') or ''}"
+        ).strip()
+        if not sender_name:
+            sender_name = getattr(me, "username", None) or ""
+        sender_username = getattr(me, "username", None) or ""
+    else:
+        sender_id = 0
+        sender_name = ""
+        sender_username = ""
+
+    # 5) INSERT
+    payload = {
+        "session": pb_session_id,
+        "chat_id": int(sent.chat_id or 0),
+        "chat_type": chat_type,
+        "chat_title": chat_title,
+        "direction": "outgoing",
+        "sender_id": sender_id,
+        "sender_name": sender_name,
+        "sender_username": sender_username,
+        "text": text,
+    }
+    async with httpx.AsyncClient(timeout=10.0) as http:
+        r = await http.post(
+            f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
+            json=payload,
+            headers=headers,
+        )
+    if r.status_code >= 300:
+        raise RuntimeError(
+            f"PB recusou INSERT audit outgoing: {r.status_code} {r.text[:200]}"
+        )
+    logger.info(
+        f"📝 audit outgoing INSERT: msg={sent.id} chat={sent.chat_id} "
+        f"session={session_id} text_len={len(text or '')}"
+    )
+
+
 @app.post("/api/send-message")
 async def send_message(
     request: SendMessageRequest,
@@ -1925,6 +2055,32 @@ async def send_message(
         # outgoing sincronamente). Sem isso, gera loop com o receptor
         # do webhook (ex: n8n respondendo às nossas mensagens).
         _RECENTLY_SENT_IDS[sent.id] = time.time()
+
+        # INSERT em `telegram_messages` direto do endpoint — garante que
+        # a mensagem aparece na UI mesmo quando o Telethon NÃO dispara
+        # `NewMessage` pra outgoing (comum após restart, em chat novo
+        # onde o cache tá frio, ou em versões onde outgoing vem só via
+        # updateMessage em vez de NewMessage). O handler do Telethon,
+        # se disparar o evento, detecta via `_is_recently_sent()` e
+        # pula o próprio INSERT — sem duplicação.
+        #
+        # Falha aqui NÃO quebra a response do send_message — o user
+        # já recebeu o OK do Telegram; só perdemos o audit log. Loga
+        # warning pra investigação.
+        try:
+            await _audit_outgoing_message(
+                client=client,
+                sent=sent,
+                session_id=request.session_id,
+                text=request.text if has_text else "",
+                has_image=has_image,
+            )
+        except Exception as e:
+            logger.warning(
+                f"⚠️ audit INSERT falhou pra msg #{sent.id} (sessão "
+                f"{request.session_id}): {e} — msg já foi entregue ao "
+                f"Telegram, só não vai aparecer na página de mensagens"
+            )
 
         return {
             "success": True,
