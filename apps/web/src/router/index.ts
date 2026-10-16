@@ -5,6 +5,7 @@ import DashboardView from '../views/DashboardView.vue'
 import AddTelegramView from '../views/AddTelegramView.vue'
 import WebhooksListView from '../views/WebhooksListView.vue'
 import ApiDocsView from '../views/ApiDocsView.vue'
+import MessagesView from '../views/MessagesView.vue'
 
 const router = createRouter({
   history: createWebHistory('/app/'),
@@ -48,6 +49,15 @@ const router = createRouter({
       name: 'api-docs',
       component: ApiDocsView,
       meta: { requiresAuth: true },
+    },
+    {
+      // Lista de mensagens estilo Telegram Web. `sessionId` é opcional —
+      // sem ele, a view mostra um seletor de conta no header.
+      path: '/messages/:sessionId?',
+      name: 'messages',
+      component: MessagesView,
+      meta: { requiresAuth: true },
+      props: true,
     },
   ],
 })

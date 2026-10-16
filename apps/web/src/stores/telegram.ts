@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { telegramApi, type TelegramSession, type Webhook } from '../services/telegram'
+import {
+  listMessagesBySession,
+  groupByChat,
+  type TelegramMessage,
+  type ChatGroup,
+  type ListMessagesParams,
+} from '../services/messages'
 
 export const useTelegramStore = defineStore('telegram', () => {
   // Estado
@@ -10,6 +17,19 @@ export const useTelegramStore = defineStore('telegram', () => {
   const webhooksBySession = ref<Record<string, Webhook[]>>({})
   const loading = ref(false)
   const error = ref('')
+
+  // Mensagens cacheadas por `session.session_id` (não pb_id). Cada entry
+  // é o array completo de mensagens já fetched (full replace, não
+  // incremental). O incremental é responsabilidade do caller (poll
+  // chama `prependMessages`).
+  const messagesBySession = ref<Record<string, TelegramMessage[]>>({})
+  // Chats derivados (group-by-chat_id), pré-computados pra evitar
+  // recomputar a cada render. Recomputado em `fetchMessages`/
+  // `prependMessages`/`invalidateMessages`.
+  const chatsBySession = ref<Record<string, ChatGroup[]>>({})
+  // Flag `inFlight` por session_id — evita fetch concorrente.
+  const messagesInFlight = ref<Record<string, boolean>>({})
+  const messagesError = ref('')
 
   // Getters
   const activeSessions = () => sessions.value.filter(s => s.active)
@@ -39,6 +59,7 @@ export const useTelegramStore = defineStore('telegram', () => {
       await telegramApi.deleteSession(sessionId)
       sessions.value = sessions.value.filter(s => s.session_id !== sessionId)
       delete webhooksBySession.value[sessionId]
+      invalidateMessages(sessionId)
     } catch (e: any) {
       error.value = e.message
       throw e
@@ -93,11 +114,107 @@ export const useTelegramStore = defineStore('telegram', () => {
     return wh
   }
 
+  // =============================================================================
+  // Mensagens (telegram_messages collection)
+  // =============================================================================
+
+  /**
+   * Fetch inicial (ou refresh) de mensagens de uma sessão. Substitui o
+   * cache inteiro e recomputa o group-by-chat.
+   *
+   * Se o caller quiser poll incremental, usa `prependMessages`.
+   */
+  async function fetchMessages(
+    sessionId: string,
+    params: ListMessagesParams = {},
+  ): Promise<TelegramMessage[]> {
+    if (messagesInFlight.value[sessionId]) {
+      // Caller concorrente — retorna o que já tem em cache.
+      return messagesBySession.value[sessionId] || []
+    }
+    messagesInFlight.value[sessionId] = true
+    messagesError.value = ''
+    try {
+      const result = await listMessagesBySession(sessionId, params)
+      messagesBySession.value[sessionId] = result.items
+      chatsBySession.value[sessionId] = groupByChat(result.items)
+      return result.items
+    } catch (e: any) {
+      messagesError.value = e?.message || 'Erro ao buscar mensagens'
+      throw e
+    } finally {
+      delete messagesInFlight.value[sessionId]
+    }
+  }
+
+  /**
+   * Poll incremental: busca mensagens com `created > since` (geralmente
+   * o `created` da msg mais recente em cache) e prepend no array.
+   * Dedupe por `id`. Recomputa group-by-chat.
+   *
+   * Se o cache estiver vazio pra essa session, faz fallback pro
+   * `fetchMessages` full.
+   */
+  async function prependMessages(
+    sessionId: string,
+    options: { since?: string; directionFilter?: ListMessagesParams['directionFilter'] } = {},
+  ): Promise<TelegramMessage[]> {
+    if (messagesInFlight.value[sessionId]) {
+      return messagesBySession.value[sessionId] || []
+    }
+    const existing = messagesBySession.value[sessionId]
+    if (!existing || existing.length === 0) {
+      return fetchMessages(sessionId)
+    }
+    const since = options.since || existing[existing.length - 1]?.created
+    if (!since) {
+      return existing
+    }
+    messagesInFlight.value[sessionId] = true
+    try {
+      const result = await listMessagesBySession(sessionId, {
+        since,
+        directionFilter: options.directionFilter,
+        perPage: 100,
+      })
+      if (result.items.length === 0) {
+        return existing
+      }
+      const knownIds = new Set(existing.map((m) => m.id))
+      const fresh = result.items.filter((m) => !knownIds.has(m.id))
+      if (fresh.length === 0) {
+        return existing
+      }
+      const merged = [...existing, ...fresh].sort((a, b) =>
+        a.created.localeCompare(b.created),
+      )
+      messagesBySession.value[sessionId] = merged
+      chatsBySession.value[sessionId] = groupByChat(merged)
+      return merged
+    } catch (e: any) {
+      // Poll incremental falhou — não derruba a UI; loga só.
+      console.warn('[prependMessages] poll falhou:', e?.message || e)
+      return existing
+    } finally {
+      delete messagesInFlight.value[sessionId]
+    }
+  }
+
+  function invalidateMessages(sessionId: string) {
+    delete messagesBySession.value[sessionId]
+    delete chatsBySession.value[sessionId]
+    delete messagesInFlight.value[sessionId]
+  }
+
   return {
     sessions,
     webhooksBySession,
     loading,
     error,
+    messagesBySession,
+    chatsBySession,
+    messagesError,
+    messagesInFlight,
     activeSessions,
     totalSessions,
     fetchSessions,
@@ -109,5 +226,8 @@ export const useTelegramStore = defineStore('telegram', () => {
     updateWebhook,
     deleteWebhook,
     toggleWebhook,
+    fetchMessages,
+    prependMessages,
+    invalidateMessages,
   }
 })
