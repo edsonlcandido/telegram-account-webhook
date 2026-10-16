@@ -4,25 +4,78 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 
-// Blocos de payload prontos pra copiar
+// Blocos de payload prontos pra copiar.
+// IMPORTANTE: payloads aqui têm que refletir EXATAMENTE o que o FastAPI
+// envia no `handle_new_message` em backend/main.py. Schema atual: aninhado,
+// com `event`, `webhook_id`, `session.{pb_id,session_id,phone,name,user}`,
+// `from` (User object completo), `chat` (User/Group/Channel object completo),
+// `message.{id,chat_id,chat_type,chat_title,direction,sender_id,sender_name,
+// sender_username,text,timestamp,reply_to_msg_id}`.
 const INCOMING_PAYLOAD = JSON.stringify(
   {
-    session_id: 'account_5511999998888',
-    message_id: 1234,
-    chat_id: 5511988887777,
-    chat_type: 'private',
-    chat_title: 'Maria Silva',
-    outgoing: false,
-    text: 'oi, tudo bem?',
-    sender_id: 5511988887777,
-    sender_name: 'Maria Silva',
-    sender_username: 'maria',
-    is_reply: false,
-    reply_to_message_id: null,
-    has_media: false,
-    media_type: null,
-    media_mime_type: null,
-    timestamp: '2026-10-13T20:51:03.123456',
+    event: 'telegram.message',
+    webhook_id: 'm9fck2xji5cghno',
+    webhook_name: 'ativa-plugin',
+    session: {
+      pb_id: '4ihcmc6a621sdij',
+      session_id: 'account_5511932055173',
+      phone: '+5511932055173',
+      name: 'EhIPTV',
+      user: {
+        id: 7892418175,
+        first_name: 'Eh!IPTV',
+        last_name: '',
+        username: 'ehiptv',
+        phone: '5511932055173',
+        is_bot: false,
+        is_verified: false,
+        is_premium: false,
+        is_scam: false,
+        is_fake: false,
+        is_contact: true,
+        is_mutual_contact: true,
+        lang_code: '',
+      },
+    },
+    from: {
+      id: 5511988887777,
+      first_name: 'Maria',
+      last_name: 'Silva',
+      username: 'maria',
+      phone: '',
+      is_bot: false,
+      is_verified: false,
+      is_premium: false,
+      is_scam: false,
+      is_fake: false,
+      is_contact: false,
+      is_mutual_contact: false,
+      lang_code: 'pt-br',
+    },
+    chat: {
+      id: 5511988887777,
+      type: 'private',
+      title: 'Maria Silva',
+      username: 'maria',
+      is_verified: false,
+      is_creator: false,
+      participants_count: null,
+      about: '',
+      has_protected_content: false,
+    },
+    message: {
+      id: 12643,
+      chat_id: 5511988887777,
+      chat_type: 'private',
+      chat_title: 'Maria Silva',
+      direction: 'incoming',
+      sender_id: 5511988887777,
+      sender_name: 'Maria Silva',
+      sender_username: 'maria',
+      text: 'oi, tudo bem?',
+      timestamp: '2026-10-15T15:27:35+00:00',
+      reply_to_msg_id: null,
+    },
   },
   null,
   2,
@@ -198,74 +251,136 @@ function goBack() {
               </thead>
               <tbody class="divide-y divide-gray-100 text-gray-700">
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">session_id</td>
+                  <td class="py-2 pr-4 font-mono text-xs">event</td>
                   <td class="py-2 pr-4">string</td>
-                  <td class="py-2">ID da conta que recebeu. Use no callback.</td>
+                  <td class="py-2">Sempre <code>"telegram.message"</code>. Reservado pra outros tipos no futuro.</td>
                 </tr>
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">message_id</td>
+                  <td class="py-2 pr-4 font-mono text-xs">webhook_id</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">ID do webhook que recebeu o POST (útil quando há vários webhooks na mesma sessão).</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs">webhook_name</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">Nome do webhook (display).</td>
+                </tr>
+                <tr>
+                  <td colspan="3" class="py-3 pr-4 font-semibold text-gray-800 text-sm bg-gray-50">session (conta Telegram que recebeu/mandou)</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">session.pb_id</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">ID do record no PocketBase.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">session.session_id</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">ID da sessão Telegram. Use no callback <code>/api/send-message</code>.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">session.phone</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">Telefone da conta.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">session.name</td>
+                  <td class="py-2 pr-4">string?</td>
+                  <td class="py-2">Apelido configurado pelo user (editável no dashboard).</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">session.user</td>
+                  <td class="py-2 pr-4">User object</td>
+                  <td class="py-2">Info da própria conta Telegram (mesmos campos do <code>from</code> abaixo).</td>
+                </tr>
+                <tr>
+                  <td colspan="3" class="py-3 pr-4 font-semibold text-gray-800 text-sm bg-gray-50">from (User object — quem mandou a mensagem)</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">from.id</td>
+                  <td class="py-2 pr-4">int</td>
+                  <td class="py-2">ID numérico do user.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">from.first_name / last_name</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">Nome. Vazio se user não tem (privacidade).</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">from.username</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">@username sem <code>@</code>. Vazio se user não tem.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">from.is_premium / is_verified / is_bot / is_scam / is_fake</td>
+                  <td class="py-2 pr-4">bool</td>
+                  <td class="py-2">Badges do Telegram. Úteis pra filtro/ranking.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">from.lang_code</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">Idioma do user no Telegram (ex: <code>pt-br</code>). Vazio se não setado.</td>
+                </tr>
+                <tr>
+                  <td colspan="3" class="py-3 pr-4 font-semibold text-gray-800 text-sm bg-gray-50">chat (onde a msg chegou — User/Group/Channel object)</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">chat.id / chat.type / chat.title</td>
+                  <td class="py-2 pr-4">int / string / string</td>
+                  <td class="py-2">ID do chat, tipo (<code>private</code>/<code>group</code>/<code>supergroup</code>/<code>channel</code>/<code>unknown</code>), e título (pra User privado é resolvido como <code>first_name + last_name</code>).</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">chat.username</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">@username público do chat (vazio se não tem).</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">chat.participants_count</td>
+                  <td class="py-2 pr-4">int?</td>
+                  <td class="py-2">Count de membros do grupo. <code>null</code> em chat privado.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">chat.about / chat.is_verified / chat.is_creator / chat.has_protected_content</td>
+                  <td class="py-2 pr-4">mixed</td>
+                  <td class="py-2">Metadados do grupo/canal. Vazio/false em privado.</td>
+                </tr>
+                <tr>
+                  <td colspan="3" class="py-3 pr-4 font-semibold text-gray-800 text-sm bg-gray-50">message (a mensagem em si)</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.id</td>
                   <td class="py-2 pr-4">int</td>
                   <td class="py-2">ID da mensagem no Telegram. Use em <code>reply_to_message_id</code>.</td>
                 </tr>
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">chat_id</td>
-                  <td class="py-2 pr-4">int</td>
-                  <td class="py-2">ID do chat. Use no callback.</td>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.chat_id / chat_type / chat_title</td>
+                  <td class="py-2 pr-4">int / string / string</td>
+                  <td class="py-2">Réplica do chat (legado — prefira <code>chat.*</code>).</td>
                 </tr>
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">chat_type</td>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.direction</td>
                   <td class="py-2 pr-4">string</td>
-                  <td class="py-2"><code>private</code> · <code>group</code> · <code>supergroup</code> · <code>channel</code> · <code>unknown</code></td>
+                  <td class="py-2"><code>"incoming"</code> (recebida) ou <code>"outgoing"</code> (a própria conta enviou via Telegram app/desktop/web ou nosso <code>/api/send-message</code>). Use pra filtrar se quiser.</td>
                 </tr>
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">chat_title</td>
-                  <td class="py-2 pr-4">string?</td>
-                  <td class="py-2">Nome do chat ou do peer (em private).</td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">outgoing</td>
-                  <td class="py-2 pr-4">bool</td>
-                  <td class="py-2"><code>true</code> = a própria conta enviou (celular/desktop). Pode filtrar/ignorar.</td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">text</td>
-                  <td class="py-2 pr-4">string</td>
-                  <td class="py-2">Conteúdo. Vazio se for só mídia.</td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">sender_id / sender_name / sender_username</td>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.sender_id / sender_name / sender_username</td>
                   <td class="py-2 pr-4">int? / string? / string?</td>
-                  <td class="py-2">Identificação do remetente. <code>username</code> pode ser <code>null</code>.</td>
+                  <td class="py-2">Réplica do <code>from</code> (legado). Pra msg de canal, <code>sender_id/name/username</code> vem vazios (canal é o sender).</td>
                 </tr>
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">is_reply</td>
-                  <td class="py-2 pr-4">bool</td>
-                  <td class="py-2">Se a mensagem é reply de outra.</td>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.text</td>
+                  <td class="py-2 pr-4">string</td>
+                  <td class="py-2">Conteúdo da mensagem (vazio se for só mídia).</td>
                 </tr>
                 <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">reply_to_message_id</td>
-                  <td class="py-2 pr-4">int?</td>
-                  <td class="py-2">ID da mensagem respondida (se <code>is_reply=true</code>).</td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">has_media</td>
-                  <td class="py-2 pr-4">bool</td>
-                  <td class="py-2">Se tem mídia anexa.</td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">media_type</td>
-                  <td class="py-2 pr-4">string?</td>
-                  <td class="py-2"><code>photo</code> · <code>video</code> · <code>voice</code> · <code>audio</code> · <code>document</code> · <code>sticker</code> · <code>geo</code> · <code>contact</code> · <code>poll</code></td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">media_mime_type</td>
-                  <td class="py-2 pr-4">string?</td>
-                  <td class="py-2">MIME quando aplicável (ex: <code>image/jpeg</code>).</td>
-                </tr>
-                <tr>
-                  <td class="py-2 pr-4 font-mono text-xs">timestamp</td>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.timestamp</td>
                   <td class="py-2 pr-4">ISO 8601</td>
                   <td class="py-2">Quando o backend processou.</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs pl-8">message.reply_to_msg_id</td>
+                  <td class="py-2 pr-4">int?</td>
+                  <td class="py-2">ID da mensagem à qual essa é uma reply. <code>null</code> se não for reply.</td>
                 </tr>
               </tbody>
             </table>
@@ -421,9 +536,29 @@ function goBack() {
           <div class="flex gap-3">
             <span class="text-purple-600 font-bold">•</span>
             <p>
-              <strong>outgoing: true</strong> significa que a própria conta enviou a
-              mensagem (pelo celular, desktop ou web do Telegram). Normalmente você quer
-              ignorar — exceto se estiver sincronizando em vários lugares.
+              <strong>message.direction: "outgoing"</strong> significa que a própria
+              conta enviou a mensagem (pelo celular, desktop ou web do Telegram, ou
+              via nosso <code>/api/send-message</code>). Normalmente você quer ignorar
+              — exceto se estiver sincronizando em vários lugares. Use
+              <code>message.direction === "outgoing"</code> pra filtrar.
+            </p>
+          </div>
+          <div class="flex gap-3">
+            <span class="text-purple-600 font-bold">•</span>
+            <p>
+              <strong>Campos aninhados (<code>session</code>, <code>from</code>,
+              <code>chat</code>) podem ser <code>null</code> em casos extremos</strong>
+              (ex.: mensagem de canal — <code>from</code> é o canal, não user).
+              Sempre faça null-check antes de acessar sub-fields.
+            </p>
+          </div>
+          <div class="flex gap-3">
+            <span class="text-purple-600 font-bold">•</span>
+            <p>
+              <strong>Campos legados (<code>message.chat_id</code>,
+              <code>message.sender_id</code>, etc) continuam sendo enviados</strong>
+              por compatibilidade. Prefira os objetos aninhados
+              (<code>chat.id</code>, <code>from.id</code>) — são mais ricos e estáveis.
             </p>
           </div>
           <div class="flex gap-3">
