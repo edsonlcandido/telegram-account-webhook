@@ -100,7 +100,13 @@ export async function listMessagesByPbId(
   const {
     page = 1,
     perPage = 200,
-    sort = '-created',
+    // Sort por `-id` (não `-created`) — o log do PB 0.40.5 dessa
+    // coleção retorna "invalid sort field \"created\"" (possivelmente
+    // o auto-field `created` ficou fora do sort whitelist após as
+    // migrations 1792063175/1791990597). O id do PB é gerado em ordem
+    // cronológica (nanoid com timestamp prefix), então `-id` dá o
+    // mesmo resultado de "mais recente primeiro".
+    sort = '-id',
     since,
     directionFilter = 'all',
     chatTypeFilter = 'all',
