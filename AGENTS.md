@@ -247,3 +247,205 @@ TL;DR (sempre ler a skill antes de mexer em `pb_migrations/`):
   Se o startup do PB imprimir `failed to apply migration ...`, **não commit**.
   Corrigir a migration e voltar pro passo 1.
 
+## Workflows por área (validate → commit → deploy)
+
+Este projeto tem 3 áreas independentes, cada uma com seu próprio ciclo
+de validação local + deploy. **Não assuma que o commit tá OK só porque
+o git aceitou** — o build/migration/syntax check PODE falhar.
+
+São 2 serviços no Easypanel (mesmo projeto `eh-tudo`):
+- `telegram-account-webhook` (PB + frontend) → deployar **só** quando
+  mexeu em `pocketbase/**` ou `apps/web/**` ou `apps/landing/**`
+- `telegram-account-webhook-telegram` (FastAPI/Telethon) → deployar
+  **só** quando mexeu em `backend/**`
+
+### Área 1 — Frontend (apps/web ou apps/landing)
+
+**Quando rodar:** qualquer mudança em `apps/web/src/**` ou `apps/landing/src/**`,
+incluindo tipos TypeScript, imports, CSS, ou templates Vue.
+
+```powershell
+# 1) Validate (build local) — OBRIGATÓRIO antes do commit
+#    npm.ps1 é bloqueado pela ExecutionPolicy do Windows → cmd.exe /c
+cmd.exe /c "cd /d apps\web && npm run build"
+cmd.exe /c "cd /d apps\landing && npm run build"   # só se mexeu na landing
+#    Sinal verde: exit 0 + "✓ built in X.XXs"
+#    Sinal vermelho: vue-tsc erro (TS6133, import não resolvido) ou
+#      Vite erro de parse SFC — NÃO COMMITAR, consertar antes
+
+# 2) Validate browser-side (deploy só ajuda se foi publicado)
+#    Após deploy, forçar reload: Ctrl+Shift+R ou ?v=novo na URL
+
+# 3) Commit
+git add apps/web/src apps/landing/src
+git commit -m "fix(ui): descrição da mudança"
+#    Lembrete: subject em PT-BR é ok aqui (user não usa Conventional
+#    Commits estrito). Mas PR description se for pra review externa
+#    deve ser Conventional.
+
+# 4) Push (NÃO dispara deploy sozinho — autoDeploy: false)
+git push
+
+# 5) Deploy — dispara rebuild do serviço Application no Easypanel
+#    Via MCP (preferido, não precisa de token):
+mcp__easypanel-bleach execute_destructive({
+  projectName: "eh-tudo",
+  serviceName: "telegram-account-webhook",   # NÃO usar "telegram-account-webhook-telegram"
+  forceRebuild: true,
+})
+#    Espera 3-5min e checa se subiu:
+curl -sS -m 10 https://telegram-webhook.ehtudo.app/health
+#    (esse endpoint do /app/ é servido pelo PB, mas se o build tiver
+#    quebrado vai dar 502 ou não responder)
+```
+
+### Área 2 — PocketBase (pocketbase/**)
+
+**Quando rodar:** qualquer mudança em `pocketbase/pb_migrations/*.js`
+(nova collection, novo field, migração de dados) ou `pocketbase/pb_hooks/*.pb.js`
+(handler, routerAdd, etc).
+
+```powershell
+# 1) Limpar pb_data local (estado limpo, garante que a migration
+#    roda do zero — não pula nenhuma)
+cmd.exe /c "C:\Users\edson\.minimax\bin\mavis-trash.cmd -- pocketbase\pb_data"
+#    Equivalente: rm -- pocketbase/pb_data (runtime routes via mavis-trash)
+
+# 2) Subir PB local. Aplica TODAS as migrations em pb_migrations/.
+#    Roda em background (PB serve indefinitely).
+cd pocketbase
+.\pocketbase.exe serve --http=127.0.0.1:8090
+#    OU se o binary não tá lá: node ../scripts/pocketbase.js
+
+# 3) Inspecionar o startup
+#    Sinal verde: "Server started at http://127.0.0.1:8090" + nada de
+#      "Error: failed to apply migration ..."
+#    Sinal vermelho: SyntaxError, "could not convert [object Object] to
+#      core.Field", "values/collectionId: cannot be blank" → NÃO
+#      COMMITAR, ler .agents/skills/pocketbase-migrations/SKILL.md
+
+# 4) Verificações de sanidade (sqlite3 no pb_data):
+#    (a) Lista de migrations aplicadas (deve bater com arquivos):
+sqlite3 pb_data/data.db "SELECT file FROM _migrations ORDER BY file"
+#    (b) Schema da collection que você modificou/criou:
+sqlite3 pb_data/data.db "PRAGMA table_info(telegram_messages)"
+#    (c) Pra collection nova, conferir que existe:
+sqlite3 pb_data/data.db "SELECT name FROM _collections ORDER BY name"
+
+# 5) Parar o PB local (Ctrl+C)
+
+# 6) Commit
+git add pocketbase/pb_migrations/ pocketbase/pb_hooks/
+git commit -m "feat(pb): descrição"
+
+# 7) Push
+git push
+
+# 8) Deploy — rebuild do serviço Application
+mcp__easypanel-bleach execute_destructive({
+  projectName: "eh-tudo",
+  serviceName: "telegram-account-webhook",
+  forceRebuild: true,
+})
+#    Verificar que a migration rodou: log do Easypanel (se acessível)
+#    ou admin UI do PB em https://telegram-webhook.ehtudo.app/_/
+```
+
+### Área 3 — Backend Telethon (backend/**)
+
+**Quando rodar:** qualquer mudança em `backend/main.py`,
+`backend/requirements.txt`, ou arquivos novos em `backend/`.
+
+```powershell
+# 1) Validate (syntax check estático) — Python não tem build step
+python -c "import ast; ast.parse(open(r'backend\main.py', encoding='utf-8').read())"
+#    Sinal verde: sem output (AST parse OK)
+#    Sinal vermelho: SyntaxError com linha/coluna do erro — NÃO
+#      COMMITAR, consertar antes
+
+# 2) (Opcional) Validar imports do requirements.txt
+#    Se mudou requirements.txt, vale instalar local pra confirmar
+#    que nada quebrou:
+python -m pip install -r backend/requirements.txt
+python -c "import fastapi, telethon, httpx, pydantic; print('imports OK')"
+#    Cuidado: pode poluir o venv global. Rodar em venv dedicado:
+#    python -m venv .venv-validate && .venv-validate\Scripts\activate
+
+# 3) Commit
+git add backend/
+git commit -m "fix(api): descrição"
+
+# 4) Push
+git push
+
+# 5) Deploy — rebuild do serviço Telegram API
+mcp__easypanel-bleach execute_destructive({
+  projectName: "eh-tudo",
+  serviceName: "telegram-account-webhook-telegram",  # DIFERENTE do Application!
+  forceRebuild: true,
+})
+#    Verificar que subiu e o service token está OK (sem isso o
+#    container crasha no lifespan):
+curl -sS -m 10 https://api-telegram.ehtudo.app/health
+#    Esperado: {"status":"ok","active_sessions":1,...}
+#    Se "active_sessions":0: Telethon não conectou, mas subiu.
+#    Se não responder: container crashou — provavelmente faltou
+#    POCKETBASE_SERVICE_TOKEN ou POCKETBASE_ADMIN_EMAIL/PASSWORD
+#    no env do serviço (ver Easypanel → serviço → Env).
+```
+
+### Detecção de qual área você mexeu
+
+Antes de commitar, sempre rodar:
+
+```powershell
+git status --short
+#    Saída típica:
+#      M apps/web/src/views/DashboardView.vue        ← Área 1 (web)
+#      M backend/main.py                            ← Área 3 (telethon)
+#      M pocketbase/pb_migrations/1792063175_...js  ← Área 2 (pb)
+#
+# Cada path mapeia pra uma área:
+#   apps/web/**, apps/landing/**        → Área 1
+#   pocketbase/**                       → Área 2
+#   backend/**                          → Área 3
+#   *.md, .agents/**, scripts/**        → Não-deploy (docs/agents só)
+#   Dockerfile*, docker-compose.yml     → Área 1 + Área 2 (Dockerfile
+#                                         é shared; build roda pra
+#                                         o serviço especificado)
+```
+
+### Validação completa (todas as áreas de uma vez)
+
+```powershell
+# Antes de um commit grande (mudança em múltiplas áreas), rodar:
+git status --short
+# ... baseado nos paths, rodar só os checks que se aplicam:
+
+if (Test-Path backend/main.py) { python -c "import ast; ast.parse(open(r'backend\main.py', encoding='utf-8').read())" }
+if (Test-Path pocketbase/pb_migrations) {
+    # sobe PB local (ver Área 2)
+}
+if (Test-Path apps/web/src) { cmd.exe /c "cd /d apps\web && npm run build" }
+if (Test-Path apps/landing/src) { cmd.exe /c "cd /d apps\landing && npm run build" }
+```
+
+### O que NÃO fazer
+
+- ❌ **Commit sem validar local** — vai deployar código quebrado e
+  usuário vai ficar sem saber. O Easypanel demora 3-5min pra detectar
+  falha, e o log do container muitas vezes não é acessível.
+- ❌ **Push sem deploy** — `autoDeploy: false` no Easypanel. Push
+  sozinho NÃO rebuilda. Sempre disparar o `deployAppService` via MCP
+  (ou webhook de deploy com token).
+- ❌ **Deployar serviço errado** — `telegram-account-webhook` é o PB
+  + frontend, `telegram-account-webhook-telegram` é o FastAPI. Trocar
+  o nome deploya o serviço errado e o que você mexeu não vai pra prod.
+- ❌ **Editar migration commitada** — PB não reaplica migrations já
+  aplicadas. Se errou, criar migration nova (ver skill
+  pocketbase-migrations).
+- ❌ **Token/URL pública em commit** — `POCKETBASE_SERVICE_TOKEN`,
+  easypanel-host, deploy tokens. Usar placeholders (`<token>`) na
+  documentação e ler do env em runtime.
+
+
