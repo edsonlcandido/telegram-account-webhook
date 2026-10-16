@@ -585,22 +585,29 @@ async def _sender_full_dict(event) -> dict | None:
 
 
 async def _chat_full_dict(event) -> dict | None:
-    """Chat/receiver object completo (User, Chat ou Channel)."""
+    """Chat/receiver object completo (User, Chat ou Channel).
+
+    Fallback chain (retorna o primeiro que der):
+    1) `event.chat` (cache do Telethon; pode vir None em outgoing pra
+       user novo que o cliente nunca viu)
+    2) `client.get_entity(event.chat_id)` — busca o peer via API.
+       Resolvido internamente pelo Telethon, sem custo de round-trip
+       se o peer já tá em cache.
+    3) Se ambos falharem, retorna None.
+    """
     chat = getattr(event, "chat", None)
     if chat:
-        d = _chat_to_dict(chat)
-        # Se for privado (User) e username vazio, tenta get_entity pra completar
-        if d and d.get("type") == "private" and not d.get("username"):
-            sender_id = getattr(event, "sender_id", None)
-            client = getattr(event, "client", None)
-            if sender_id and client:
-                try:
-                    full = await client.get_entity(sender_id)
-                    if full:
-                        d = _chat_to_dict(full)
-                except Exception:
-                    pass
-        return d
+        return _chat_to_dict(chat)
+
+    client = getattr(event, "client", None)
+    chat_id = getattr(event, "chat_id", None)
+    if client and chat_id is not None:
+        try:
+            full = await client.get_entity(chat_id)
+            if full:
+                return _chat_to_dict(full)
+        except Exception as e:
+            logger.info(f"_chat_full_dict fallback fetch falhou: {e}")
     return None
 
 
@@ -677,9 +684,18 @@ async def handle_new_message(event, session_id: str):
         self_full = await _self_user_dict(event)
 
         # 2) Extrai metadados da mensagem
-        sender_name = _sender_name(event) or ""
-        sender_username = await _sender_username(event)
-        chat_title = _chat_title(event) or ""
+        # sender_name e chat_title são resolvidos a partir dos dicts já
+        # populados (com fallback de get_entity) — mais robusto que os
+        # helpers legados `_sender_name` e `_chat_title`, que falham
+        # quando o cache do Telethon tá frio (comum em outgoing message
+        # pra user novo).
+        sender_name = ""
+        if sender_full:
+            first = sender_full.get("first_name") or ""
+            last = sender_full.get("last_name") or ""
+            sender_name = f"{first} {last}".strip()
+        sender_username = (sender_full or {}).get("username") or ""
+        chat_title = (chat_full or {}).get("title") or ""
 
         # Detecção de direction COM FALLBACK.
         # O `event.outgoing` do Telethon falha em alguns cenários:
