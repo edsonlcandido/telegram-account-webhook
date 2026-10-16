@@ -12,12 +12,16 @@ LABEL maintainer="Edson <edson@ehtudo.app>"
 WORKDIR /app
 
 # -----------------------------------------------------------------------------
-# Dependências do sistema (telethon/cryptography)
+# Dependências do sistema (telethon/cryptography + Pillow JPEG/PNG/WebP)
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libffi-dev \
     libssl-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libpng-dev \
+    libwebp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------

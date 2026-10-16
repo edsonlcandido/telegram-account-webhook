@@ -5,6 +5,7 @@ Gerencia sessões Telethon e forwards mensagens para webhooks dos clientes
 
 import os
 import re
+import io
 import json
 import time
 import asyncio
@@ -25,8 +26,10 @@ from telethon import TelegramClient
 from telethon.events import NewMessage
 from telethon.sessions import StringSession
 from telethon.tl import types as tl_types
+from telethon.tl.types import InputMediaUploadedPhoto
 
 import httpx
+from PIL import Image
 
 # =============================================================================
 # Configuração
@@ -1760,6 +1763,74 @@ def _validate_image_url(url: str) -> None:
             raise ValueError(f"host resolve para IP bloqueado: {ip}")
 
 
+# Telegram auto-classifica WebP como sticker (mesmo que o usuário queira
+# uma foto comum). Pra forçar como photo, baixamos o arquivo, convertemos
+# WebP→JPEG (ou passamos JPEG/PNG direto) e fazemos upload via
+# InputMediaUploadedPhoto — que o servidor Telegram trata como foto
+# inline, sem análise de sticker.
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB (limite do Telegram pra foto)
+_DOWNLOAD_TIMEOUT_S = 30.0
+
+
+async def _download_and_prepare_image(url: str) -> bytes:
+    """Baixa a imagem, valida tamanho/formato, converte WebP→JPEG se preciso.
+
+    Retorna os bytes prontos pra upload via InputMediaUploadedPhoto. JPEG e
+    PNG passam direto. WebP é convertido pra JPEG (Pillow). Outros formatos
+    ou falha de decode levantam HTTPException 400.
+    """
+    try:
+        async with httpx.AsyncClient(
+            timeout=_DOWNLOAD_TIMEOUT_S, follow_redirects=True
+        ) as http:
+            resp = await http.get(url)
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=400, detail=f"falha ao baixar imagem: {e}"
+        )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail=f"URL retornou status {resp.status_code}",
+        )
+
+    raw = resp.content
+    if len(raw) > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"imagem maior que {_MAX_IMAGE_BYTES // (1024*1024)} MB",
+        )
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img_format = (img.format or "").upper()
+        img.load()  # força decode pra falhar cedo em bytes inválidos
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"arquivo não é uma imagem válida: {e}"
+        )
+
+    # JPEG/PNG: passa direto. Outros (incluindo WebP): converte pra JPEG.
+    if img_format in ("JPEG", "PNG"):
+        return raw
+
+    if img.mode in ("RGBA", "LA", "P"):
+        # JPEG não suporta alpha. Compor sobre fundo branco.
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        background.paste(
+            img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None
+        )
+        img = background
+    else:
+        img = img.convert("RGB")
+
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=92, optimize=True)
+    return out.getvalue()
+
+
 @app.post("/api/send-message")
 async def send_message(
     request: SendMessageRequest,
@@ -1819,21 +1890,28 @@ async def send_message(
 
     try:
         if has_image:
-            url = str(request.image_url)
-            if has_text:
-                sent = await client.send_file(
-                    request.chat_id,
-                    url,
-                    caption=request.text,
-                    parse_mode=parse_mode_arg,
-                    **common_kwargs,
-                )
-            else:
-                sent = await client.send_file(
-                    request.chat_id,
-                    url,
-                    **common_kwargs,
-                )
+            # Baixar e normalizar a imagem (WebP→JPEG) antes do upload.
+            # Se passar URL cru pra send_file, o Telegram auto-classifica
+            # WebP como sticker. Pré-processar garante que vire foto.
+            image_bytes = await _download_and_prepare_image(
+                str(request.image_url)
+            )
+            # Upload via InputFile e wrap em InputMediaUploadedPhoto.
+            # O Telethon trata isso como photo (InputMediaUploadedPhoto)
+            # em vez de deixar o servidor decidir baseado no formato.
+            uploaded = await client.upload_file(
+                image_bytes, file_name="image.jpg"
+            )
+            media = InputMediaUploadedPhoto(
+                file=uploaded, stickers=None, ttl_seconds=None
+            )
+            sent = await client.send_file(
+                request.chat_id,
+                media,
+                caption=request.text if has_text else "",
+                parse_mode=parse_mode_arg,
+                **common_kwargs,
+            )
         else:
             sent = await client.send_message(
                 request.chat_id,
