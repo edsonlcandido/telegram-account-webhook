@@ -58,20 +58,43 @@ export interface ListMessagesResult {
 // =============================================================================
 
 /**
- * Lista mensagens da collection `telegram_messages` filtrando por
- * `session.session_id` (o session_id textual tipo "account_5511...").
+ * Resolve o `session_id` textual (tipo "account_5511...") pro `pb_id`
+ * (id do record em `telegram_sessions`). Cacheável no caller — 1 request
+ * por sessão por sessão de browser.
  *
- * Por que `session.session_id` e não `session = "pb_id"`: o frontend
- * recebe `session_id` (string amigável) via `telegramStore.sessions`.
- * PocketBase suporta filtro em campo de expanded relation, então a
- * query faz o join server-side sem precisar do pb_id explícito.
+ * Necessário porque o frontend recebe `session_id` (string amigável) do
+ * `telegramStore.sessions`, mas a relation em `telegram_messages` aponta
+ * pro `pb_id`. E o filter do PB **não** suporta `session.session_id =
+ * "..."` (erro 400) — só equality direto no relation (`session = "pb_id"`).
+ */
+export async function getSessionPbId(sessionId: string): Promise<string> {
+  const result = await pb.collection('telegram_sessions').getList<{
+    id: string
+    session_id: string
+  }>(1, 1, {
+    filter: `session_id = "${escapeFilterValue(sessionId)}"`,
+  })
+  if (result.items.length === 0) {
+    throw new Error(`Sessão não encontrada: ${sessionId}`)
+  }
+  return result.items[0].id
+}
+
+/**
+ * Lista mensagens da collection `telegram_messages` filtrando pelo
+ * `pb_id` da sessão (relation equality: `session = "pb_id"`).
+ *
+ * Por que pb_id e não session_id: PocketBase não suporta filtro em
+ * campo de relation expandida (sintaxe `relation.field = value`) — só
+ * equality direto no id do record relacionado. O caller resolve
+ * `session_id → pb_id` via `getSessionPbId()` e cacheia.
  *
  * Auth: o `pb` (PocketBase SDK) já injeta o user JWT em todo request
  * via `pb.authStore.token`. A `listRule` da collection é
  * `"@request.auth.id != ''"` (permissiva — qualquer user autenticado lê).
  */
-export async function listMessagesBySession(
-  sessionId: string,
+export async function listMessagesByPbId(
+  sessionPbId: string,
   params: ListMessagesParams = {},
 ): Promise<ListMessagesResult> {
   const {
@@ -85,7 +108,7 @@ export async function listMessagesBySession(
   } = params
 
   const filterParts: string[] = [
-    `session.session_id = "${escapeFilterValue(sessionId)}"`,
+    `session = "${escapeFilterValue(sessionPbId)}"`,
   ]
   if (since) {
     filterParts.push(`created > "${escapeFilterValue(since)}"`)

@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { telegramApi, type TelegramSession, type Webhook } from '../services/telegram'
 import {
-  listMessagesBySession,
+  listMessagesByPbId,
+  getSessionPbId,
   groupByChat,
   type TelegramMessage,
   type ChatGroup,
@@ -30,6 +31,12 @@ export const useTelegramStore = defineStore('telegram', () => {
   // Flag `inFlight` por session_id — evita fetch concorrente.
   const messagesInFlight = ref<Record<string, boolean>>({})
   const messagesError = ref('')
+  // Mapeamento `session.session_id` (texto) → `pb_id` (record id em
+  // `telegram_sessions`). Cacheado pra não resolver a cada poll.
+  // Necessário pq o filter do PB não suporta `relation.field = value`
+  // inline (erro 400) — só equality direto no id do relation
+  // (`session = "pb_id"`).
+  const sessionPbIds = ref<Record<string, string>>({})
 
   // Getters
   const activeSessions = () => sessions.value.filter(s => s.active)
@@ -59,6 +66,7 @@ export const useTelegramStore = defineStore('telegram', () => {
       await telegramApi.deleteSession(sessionId)
       sessions.value = sessions.value.filter(s => s.session_id !== sessionId)
       delete webhooksBySession.value[sessionId]
+      delete sessionPbIds.value[sessionId]
       invalidateMessages(sessionId)
     } catch (e: any) {
       error.value = e.message
@@ -119,6 +127,23 @@ export const useTelegramStore = defineStore('telegram', () => {
   // =============================================================================
 
   /**
+   * Resolve `session_id` (texto) → `pb_id` (record id em
+   * `telegram_sessions`). Cacheado em `sessionPbIds` pra não bater no
+   * PB a cada poll.
+   *
+   * Necessário pq o filter do PB NÃO suporta
+   * `session.session_id = "..."` (relation field inline = erro 400).
+   * Só funciona `session = "pb_id"` (relation equality direto).
+   */
+  async function resolveSessionPbId(sessionId: string): Promise<string> {
+    const cached = sessionPbIds.value[sessionId]
+    if (cached) return cached
+    const pbId = await getSessionPbId(sessionId)
+    sessionPbIds.value[sessionId] = pbId
+    return pbId
+  }
+
+  /**
    * Fetch inicial (ou refresh) de mensagens de uma sessão. Substitui o
    * cache inteiro e recomputa o group-by-chat.
    *
@@ -135,7 +160,8 @@ export const useTelegramStore = defineStore('telegram', () => {
     messagesInFlight.value[sessionId] = true
     messagesError.value = ''
     try {
-      const result = await listMessagesBySession(sessionId, params)
+      const pbId = await resolveSessionPbId(sessionId)
+      const result = await listMessagesByPbId(pbId, params)
       messagesBySession.value[sessionId] = result.items
       chatsBySession.value[sessionId] = groupByChat(result.items)
       return result.items
@@ -172,7 +198,8 @@ export const useTelegramStore = defineStore('telegram', () => {
     }
     messagesInFlight.value[sessionId] = true
     try {
-      const result = await listMessagesBySession(sessionId, {
+      const pbId = await resolveSessionPbId(sessionId)
+      const result = await listMessagesByPbId(pbId, {
         since,
         directionFilter: options.directionFilter,
         perPage: 100,
