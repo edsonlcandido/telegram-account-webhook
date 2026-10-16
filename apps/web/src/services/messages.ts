@@ -72,7 +72,7 @@ export async function getSessionPbId(sessionId: string): Promise<string> {
     id: string
     session_id: string
   }>(1, 1, {
-    filter: `session_id = "${escapeFilterValue(sessionId)}"`,
+    filter: `session_id="${escapeFilterValue(sessionId)}"`,
   })
   if (result.items.length === 0) {
     throw new Error(`Sessão não encontrada: ${sessionId}`)
@@ -108,22 +108,22 @@ export async function listMessagesByPbId(
   } = params
 
   const filterParts: string[] = [
-    `session = "${escapeFilterValue(sessionPbId)}"`,
+    `session="${escapeFilterValue(sessionPbId)}"`,
   ]
   if (since) {
-    filterParts.push(`created > "${escapeFilterValue(since)}"`)
+    filterParts.push(`created>"${escapeFilterValue(since)}"`)
   }
   if (directionFilter !== 'all') {
-    filterParts.push(`direction = "${directionFilter}"`)
+    filterParts.push(`direction="${directionFilter}"`)
   }
   if (chatTypeFilter !== 'all') {
-    filterParts.push(`chat_type = "${chatTypeFilter}"`)
+    filterParts.push(`chat_type="${chatTypeFilter}"`)
   }
   if (textSearch && textSearch.trim()) {
-    filterParts.push(`text ~ "${escapeFilterValue(textSearch.trim())}"`)
+    filterParts.push(`text~"${escapeFilterValue(textSearch.trim())}"`)
   }
 
-  const filter = filterParts.join(' && ')
+  const filter = filterParts.join('&&')
 
   const result = await pb.collection('telegram_messages').getList<TelegramMessage>(
     page,
