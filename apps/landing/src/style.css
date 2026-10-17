@@ -1,7 +1,34 @@
 @import "tailwindcss";
-
-/* Import Inter font */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+/* ==========================================================
+   Telegram flat design system
+   Brand  = azul Telegram (#229ED9) — cor primária
+   Accent = violeta (#7C5CFC) — cor secundária
+   ========================================================== */
+@theme {
+  --color-brand-50: #EAF4FA;
+  --color-brand-100: #D6EEF9;
+  --color-brand-200: #A9DBF0;
+  --color-brand-300: #6BC2E6;
+  --color-brand-400: #3FB0DC;
+  --color-brand-500: #229ED9;
+  --color-brand-600: #1B7FB0;
+  --color-brand-700: #1A678E;
+  --color-brand-800: #1A5273;
+  --color-brand-900: #194358;
+
+  --color-accent-50: #F4F2FF;
+  --color-accent-100: #EAE5FF;
+  --color-accent-200: #D5CCFF;
+  --color-accent-300: #B3A1FF;
+  --color-accent-400: #8E75FE;
+  --color-accent-500: #7C5CFC;
+  --color-accent-600: #5B3FD6;
+  --color-accent-700: #4830AC;
+  --color-accent-800: #372582;
+  --color-accent-900: #2A1D63;
+}
 
 html {
   scroll-behavior: smooth;

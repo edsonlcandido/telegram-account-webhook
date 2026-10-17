@@ -170,7 +170,7 @@ function goBack() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50">
+  <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
     <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
       <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -190,7 +190,7 @@ function goBack() {
           </div>
           <div class="flex items-center">
             <span
-              class="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"
+              class="text-xl font-bold text-brand-600"
             >
               Documentação da API
             </span>
@@ -218,12 +218,12 @@ function goBack() {
 
       <!-- 1. POST recebido -->
       <section class="bg-white rounded-2xl shadow-xl overflow-hidden">
-        <div class="bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-4">
+        <div class="bg-brand-500 px-6 py-4">
           <h2 class="text-xl font-bold text-white flex items-center gap-2">
             <span class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-bold">1</span>
             POST que você recebe na sua URL
           </h2>
-          <p class="text-blue-100 text-sm mt-1">
+          <p class="text-brand-100 text-sm mt-1">
             Disparado a cada mensagem nova (incoming ou outgoing da própria conta).
           </p>
         </div>
@@ -233,7 +233,7 @@ function goBack() {
             <p class="font-semibold text-gray-800">Payload (JSON)</p>
             <button
               @click="copy('in', INCOMING_PAYLOAD)"
-              class="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 font-medium"
+              class="text-xs px-3 py-1.5 bg-brand-50 text-brand-700 rounded-lg hover:bg-brand-100 font-medium"
             >
               {{ copied === 'in' ? '✓ Copiado' : 'Copiar' }}
             </button>
@@ -390,7 +390,7 @@ function goBack() {
 
       <!-- 2. POST de resposta -->
       <section class="bg-white rounded-2xl shadow-xl overflow-hidden">
-        <div class="bg-gradient-to-r from-green-500 to-emerald-600 px-6 py-4">
+        <div class="bg-green-500 px-6 py-4">
           <h2 class="text-xl font-bold text-white flex items-center gap-2">
             <span class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-bold">2</span>
             POST pra responder — <code class="font-mono">/api/send-message</code>
@@ -489,7 +489,7 @@ function goBack() {
 
       <!-- 3. Webhook de teste -->
       <section class="bg-white rounded-2xl shadow-xl overflow-hidden">
-        <div class="bg-gradient-to-r from-yellow-500 to-orange-500 px-6 py-4">
+        <div class="bg-yellow-500 px-6 py-4">
           <h2 class="text-xl font-bold text-white flex items-center gap-2">
             <span class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-bold">3</span>
             POST do botão "Testar Webhook"
@@ -519,7 +519,7 @@ function goBack() {
 
       <!-- 4. Notas -->
       <section class="bg-white rounded-2xl shadow-xl overflow-hidden">
-        <div class="bg-gradient-to-r from-purple-500 to-purple-600 px-6 py-4">
+        <div class="bg-accent-500 px-6 py-4">
           <h2 class="text-xl font-bold text-white flex items-center gap-2">
             <span class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-bold">4</span>
             Notas importantes
@@ -527,14 +527,14 @@ function goBack() {
         </div>
         <div class="p-6 space-y-3 text-sm text-gray-700">
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Responda 200 rápido.</strong> O backend dá timeout em 30s. Se demorar
               mais que isso, o evento é só logado como falha — não há retry.
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>message.direction: "outgoing"</strong> significa que a própria
               conta enviou a mensagem (pelo celular, desktop ou web do Telegram, ou
@@ -544,7 +544,7 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Campos aninhados (<code>session</code>, <code>from</code>,
               <code>chat</code>) podem ser <code>null</code> em casos extremos</strong>
@@ -553,7 +553,7 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Campos legados (<code>message.chat_id</code>,
               <code>message.sender_id</code>, etc) continuam sendo enviados</strong>
@@ -562,7 +562,7 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Sem loop.</strong> Mensagens enviadas pelo nosso próprio
               <code>/api/send-message</code> já são suprimidas no backend (10s) — não
@@ -570,7 +570,7 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Sessão offline = 404.</strong> Se a conta não está na lista
               <code>active_clients</code> em memória (ex.: container acabou de subir e
@@ -580,14 +580,14 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>chat_id aceita @username.</strong> Pode mandar
               <code>"@fulano"</code> no lugar de número, e o Telethon resolve.
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Pausar webhook.</strong> Use o botão "Pausar" no dashboard
               (<code>/api/toggle-webhook</code>) pra silenciar sem perder a URL
@@ -595,7 +595,7 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Token PB obrigatório.</strong> O <code>/api/send-message</code>
               exige o JWT do PocketBase no header <code>Authorization</code> (o frontend
@@ -603,7 +603,7 @@ function goBack() {
             </p>
           </div>
           <div class="flex gap-3">
-            <span class="text-purple-600 font-bold">•</span>
+            <span class="text-accent-600 font-bold">•</span>
             <p>
               <strong>Múltiplos webhooks + filtros.</strong> Uma sessão pode ter N
               webhooks, cada um com filtros próprios: <code>filter_direction</code>

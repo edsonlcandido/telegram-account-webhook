@@ -19,7 +19,7 @@ onMounted(() => {
 <template>
   <div class="min-h-screen flex items-center justify-center bg-gray-50">
     <div class="text-center">
-      <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+      <div class="w-12 h-12 border-4 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
       <p class="mt-4 text-sm text-gray-600">Redirecionando...</p>
     </div>
   </div>

@@ -355,7 +355,7 @@ function goBack() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 flex flex-col">
+  <div class="min-h-screen bg-gray-50 flex flex-col">
     <!-- Header -->
     <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -368,7 +368,7 @@ function goBack() {
               <ArrowLeftIcon class="w-5 h-5" />
               <span class="ml-1 font-semibold hidden sm:inline">Voltar</span>
             </button>
-            <span class="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent truncate">
+            <span class="text-xl font-bold text-brand-600 truncate">
               Mensagens
             </span>
             <span v-if="accountLabel" class="text-sm text-gray-600 truncate hidden md:inline">
@@ -423,7 +423,7 @@ function goBack() {
         </p>
         <button
           @click="router.push('/add-telegram')"
-          class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600"
+          class="inline-flex items-center px-6 py-3 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600"
         >
           Adicionar conta
         </button>
@@ -445,7 +445,7 @@ function goBack() {
               v-model="searchText"
               type="text"
               placeholder="Buscar chat..."
-              class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none"
+              class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-brand-500 focus:outline-none"
             />
             <div class="flex gap-1">
               <button
@@ -453,7 +453,7 @@ function goBack() {
                 :key="opt"
                 @click="directionFilter = opt"
                 class="flex-1 px-2 py-1 text-xs font-medium rounded-md transition-colors"
-                :class="directionFilter === opt ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+                :class="directionFilter === opt ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
               >
                 {{
                   opt === 'all'
@@ -480,10 +480,10 @@ function goBack() {
               :key="chat.chat_id"
               @click="selectChat(chat)"
               class="w-full px-3 py-3 flex items-start gap-2 hover:bg-gray-50 text-left border-b border-gray-100"
-              :class="{ 'bg-blue-50': selectedChatId === chat.chat_id }"
+              :class="{ 'bg-brand-50': selectedChatId === chat.chat_id }"
             >
               <div
-                class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0 text-white"
+                class="w-10 h-10 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0 text-white"
               >
                 <component
                   :is="chatTypeIcon(chat.chat_type)"
@@ -502,7 +502,7 @@ function goBack() {
                 <p class="text-xs text-gray-500 truncate mt-0.5">
                   <span
                     v-if="chat.lastMessage.direction === 'outgoing'"
-                    class="text-blue-600"
+                    class="text-brand-600"
                   >Você: </span>
                   {{ chat.lastMessage.text || '(sem texto)' }}
                 </p>
@@ -560,7 +560,7 @@ function goBack() {
               class="px-4 py-3 border-b border-gray-200 flex items-center gap-3"
             >
               <div
-                class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0 text-white"
+                class="w-10 h-10 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0 text-white"
               >
                 <component
                   :is="chatTypeIcon(selectedChat.chat_type)"
@@ -598,12 +598,12 @@ function goBack() {
                 <div
                   class="max-w-[75%] rounded-2xl px-4 py-2 shadow-sm"
                   :class="msg.direction === 'outgoing'
-                    ? 'bg-gradient-to-br from-blue-500 to-purple-500 text-white'
+                    ? 'bg-brand-500 text-white'
                     : 'bg-white text-gray-900 border border-gray-200'"
                 >
                   <p
                     v-if="msg.direction === 'incoming' && msg.sender_name"
-                    class="text-xs font-semibold mb-1 text-blue-600"
+                    class="text-xs font-semibold mb-1 text-brand-600"
                   >
                     {{ msg.sender_name }}
                   </p>
@@ -612,7 +612,7 @@ function goBack() {
                   </p>
                   <p
                     class="text-[10px] mt-1"
-                    :class="msg.direction === 'outgoing' ? 'text-blue-100' : 'text-gray-400'"
+                    :class="msg.direction === 'outgoing' ? 'text-brand-100' : 'text-gray-400'"
                   >
                     {{ formatTimestamp(msg.created) }}
                   </p>
@@ -639,7 +639,7 @@ function goBack() {
                   v-model="composerImageUrl"
                   type="url"
                   placeholder="https://exemplo.com/foto.jpg"
-                  class="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                  class="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-brand-500 focus:outline-none"
                   :disabled="composerSending"
                 />
                 <button
@@ -654,8 +654,8 @@ function goBack() {
               <div class="flex items-end gap-2">
                 <button
                   @click="showImageInput = !showImageInput"
-                  class="p-2 text-gray-500 hover:text-blue-600 rounded-lg flex-shrink-0"
-                  :class="{ 'text-blue-600 bg-blue-50': showImageInput }"
+                  class="p-2 text-gray-500 hover:text-brand-600 rounded-lg flex-shrink-0"
+                  :class="{ 'text-brand-600 bg-brand-50': showImageInput }"
                   :disabled="composerSending"
                   title="Anexar imagem (URL)"
                 >
@@ -667,7 +667,7 @@ function goBack() {
                   :placeholder="composerImageUrl
                     ? 'Caption (opcional)...'
                     : 'Digite uma mensagem...'"
-                  class="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none resize-none max-h-32"
+                  class="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-brand-500 focus:outline-none resize-none max-h-32"
                   :disabled="composerSending"
                   @keydown.enter.exact.prevent="sendMessage"
                 ></textarea>
@@ -682,7 +682,7 @@ function goBack() {
                 <button
                   @click="sendMessage"
                   :disabled="!canSend"
-                  class="px-3 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium rounded-lg hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 flex-shrink-0"
+                  class="px-3 py-2 bg-brand-500 text-white font-medium rounded-lg hover:bg-brand-600 disabled:opacity-50 flex-shrink-0"
                   title="Enviar"
                 >
                   <PaperAirplaneIcon class="h-4 w-4" />

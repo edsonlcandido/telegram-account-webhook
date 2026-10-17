@@ -6,7 +6,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center h-16">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+          <div class="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center">
             <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
             </svg>
@@ -17,7 +17,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <a href="#features" class="hidden sm:block text-gray-600 hover:text-gray-900 transition-colors">Recursos</a>
           <a href="#how" class="hidden sm:block text-gray-600 hover:text-gray-900 transition-colors">Como Funciona</a>
           <a href="#pricing" class="hidden sm:block text-gray-600 hover:text-gray-900 transition-colors">Preço</a>
-          <a href="/app/" class="inline-flex items-center px-4 py-2 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-all shadow-lg shadow-purple-500/25">
+          <a href="/app/" class="inline-flex items-center px-4 py-2 bg-brand-500 text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-all shadow-lg">
             Acessar Painel
             <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
@@ -29,21 +29,21 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </nav>
 
   <!-- Hero Section -->
-  <section class="min-h-screen flex items-center justify-center pt-16 pb-20 px-4 bg-gradient-to-br from-gray-50 via-white to-purple-50">
+  <section class="min-h-screen flex items-center justify-center pt-16 pb-20 px-4 bg-gray-50">
     <div class="max-w-5xl mx-auto text-center">
       <!-- Badge -->
-      <div class="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 border border-purple-200 rounded-full mb-8">
+      <div class="inline-flex items-center gap-2 px-4 py-2 bg-accent-50 border border-accent-200 rounded-full mb-8">
         <span class="relative flex h-2 w-2">
           <span class="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75 animate-ping"></span>
           <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
         </span>
-        <span class="text-sm text-purple-700 font-medium">100% Auto-hospedado • Sem mensalidade</span>
+        <span class="text-sm text-accent-700 font-medium">100% Auto-hospedado • Sem mensalidade</span>
       </div>
 
       <!-- Title -->
       <h1 class="text-5xl md:text-7xl font-black text-gray-900 mb-6 leading-tight">
         Conecte seu Telegram a
-        <span class="bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">qualquer automação</span>
+        <span class="text-brand-500">qualquer automação</span>
       </h1>
 
       <!-- Subtitle -->
@@ -54,7 +54,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
       <!-- CTA Buttons -->
       <div class="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-        <a href="/app/" class="inline-flex items-center justify-center px-8 py-4 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 text-white text-lg font-bold rounded-xl hover:opacity-90 transition-all shadow-xl shadow-purple-500/30 hover:shadow-purple-500/50 hover:scale-105">
+        <a href="/app/" class="inline-flex items-center justify-center px-8 py-4 bg-brand-500 text-white text-lg font-bold rounded-xl hover:opacity-90 transition-all shadow-xl hover:scale-105">
           Começar Agora
           <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
@@ -76,10 +76,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             </div>
             <span class="text-xs text-gray-500 ml-2">Configuração de Webhook</span>
           </div>
-          <div class="p-6 bg-gradient-to-br from-gray-50 to-white">
+          <div class="p-6 bg-gray-50">
             <div class="flex items-center gap-4 mb-6">
-              <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                <svg class="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+              <div class="w-12 h-12 bg-brand-100 rounded-full flex items-center justify-center">
+                <svg class="w-6 h-6 text-brand-600" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
                 </svg>
               </div>
@@ -95,11 +95,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                 </svg>
                 <span class="text-sm text-green-800">Webhook configurado</span>
               </div>
-              <div class="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div class="flex items-center gap-3 p-3 bg-brand-50 rounded-lg border border-brand-200">
+                <svg class="w-5 h-5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                 </svg>
-                <span class="text-sm text-blue-800">n8n.automation.com/webhook/telegram</span>
+                <span class="text-sm text-brand-800">n8n.automation.com/webhook/telegram</span>
               </div>
             </div>
             <div class="text-xs text-gray-500 bg-gray-100 rounded-lg p-4 font-mono">
@@ -115,7 +115,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <section id="how" class="py-24 px-4 bg-white">
     <div class="max-w-6xl mx-auto">
       <div class="text-center mb-16">
-        <span class="text-sm font-semibold text-purple-600 uppercase tracking-wider">Simples assim</span>
+        <span class="text-sm font-semibold text-accent-600 uppercase tracking-wider">Simples assim</span>
         <h2 class="text-4xl md:text-5xl font-bold text-gray-900 mt-3">Como Funciona</h2>
         <p class="text-xl text-gray-600 mt-4">Três passos para automatizar seu Telegram</p>
       </div>
@@ -123,10 +123,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="grid md:grid-cols-3 gap-8">
         <!-- Step 1 -->
         <div class="relative">
-          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">1</div>
-          <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-purple-200 transition-all hover:-translate-y-2">
-            <div class="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mb-6">
-              <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="absolute -top-4 -left-4 w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">1</div>
+          <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-accent-200 transition-all hover:-translate-y-2">
+            <div class="w-16 h-16 bg-brand-100 rounded-2xl flex items-center justify-center mb-6">
+              <svg class="w-8 h-8 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
               </svg>
             </div>
@@ -137,10 +137,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <!-- Step 2 -->
         <div class="relative">
-          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">2</div>
-          <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-purple-200 transition-all hover:-translate-y-2">
-            <div class="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mb-6">
-              <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="absolute -top-4 -left-4 w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">2</div>
+          <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-accent-200 transition-all hover:-translate-y-2">
+            <div class="w-16 h-16 bg-accent-100 rounded-2xl flex items-center justify-center mb-6">
+              <svg class="w-8 h-8 text-accent-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
               </svg>
             </div>
@@ -151,8 +151,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <!-- Step 3 -->
         <div class="relative">
-          <div class="absolute -top-4 -left-4 w-12 h-12 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">3</div>
-          <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-purple-200 transition-all hover:-translate-y-2">
+          <div class="absolute -top-4 -left-4 w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg z-10">3</div>
+          <div class="bg-gray-50 rounded-2xl p-8 pt-12 h-full border-2 border-transparent hover:border-accent-200 transition-all hover:-translate-y-2">
             <div class="w-16 h-16 bg-green-100 rounded-2xl flex items-center justify-center mb-6">
               <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
@@ -167,17 +167,17 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
 
   <!-- Features -->
-  <section id="features" class="py-24 px-4 bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white">
+  <section id="features" class="py-24 px-4 bg-gray-900 text-white">
     <div class="max-w-6xl mx-auto">
       <div class="text-center mb-16">
-        <span class="text-sm font-semibold text-purple-400 uppercase tracking-wider">Recursos</span>
+        <span class="text-sm font-semibold text-accent-400 uppercase tracking-wider">Recursos</span>
         <h2 class="text-4xl md:text-5xl font-bold mt-3">Tudo que você precisa</h2>
         <p class="text-xl text-gray-400 mt-4">Simples, poderoso e sob seu controle</p>
       </div>
 
       <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         <div class="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all">
-          <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center mb-4">
+          <div class="w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center mb-4">
             <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
             </svg>
@@ -187,7 +187,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
 
         <div class="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all">
-          <div class="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mb-4">
+          <div class="w-12 h-12 bg-accent-500 rounded-xl flex items-center justify-center mb-4">
             <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101"/>
             </svg>
@@ -197,7 +197,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
 
         <div class="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all">
-          <div class="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center mb-4">
+          <div class="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center mb-4">
             <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
             </svg>
@@ -207,7 +207,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
 
         <div class="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all">
-          <div class="w-12 h-12 bg-gradient-to-br from-orange-500 to-yellow-500 rounded-xl flex items-center justify-center mb-4">
+          <div class="w-12 h-12 bg-orange-500 rounded-xl flex items-center justify-center mb-4">
             <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
             </svg>
@@ -217,7 +217,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
 
         <div class="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all">
-          <div class="w-12 h-12 bg-gradient-to-br from-pink-500 to-rose-500 rounded-xl flex items-center justify-center mb-4">
+          <div class="w-12 h-12 bg-accent-500 rounded-xl flex items-center justify-center mb-4">
             <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
@@ -227,7 +227,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
 
         <div class="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all">
-          <div class="w-12 h-12 bg-gradient-to-br from-indigo-500 to-blue-500 rounded-xl flex items-center justify-center mb-4">
+          <div class="w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center mb-4">
             <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
             </svg>
@@ -243,14 +243,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <section id="pricing" class="py-24 px-4 bg-gray-50">
     <div class="max-w-4xl mx-auto">
       <div class="text-center mb-16">
-        <span class="text-sm font-semibold text-purple-600 uppercase tracking-wider">Preço</span>
+        <span class="text-sm font-semibold text-accent-600 uppercase tracking-wider">Preço</span>
         <h2 class="text-4xl md:text-5xl font-bold text-gray-900 mt-3">Simples e justo</h2>
         <p class="text-xl text-gray-600 mt-4">Sem surpresas. Sem mensalidades.</p>
       </div>
 
-      <div class="bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 rounded-3xl p-8 md:p-12 text-white relative overflow-hidden">
-        <div class="absolute top-0 right-0 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl"></div>
-        <div class="absolute bottom-0 left-0 w-64 h-64 bg-cyan-500/20 rounded-full blur-3xl"></div>
+      <div class="bg-gray-900 rounded-3xl p-8 md:p-12 text-white relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-64 h-64 bg-accent-500/20 rounded-full blur-3xl"></div>
+        <div class="absolute bottom-0 left-0 w-64 h-64 bg-brand-500/20 rounded-full blur-3xl"></div>
         
         <div class="relative">
           <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-8">
@@ -371,11 +371,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
 
   <!-- CTA Section -->
-  <section class="py-24 px-4 bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400">
+  <section class="py-24 px-4 bg-brand-500">
     <div class="max-w-4xl mx-auto text-center text-white">
       <h2 class="text-4xl md:text-5xl font-bold mb-6">Pronto para automatizar?</h2>
       <p class="text-xl text-white/90 mb-10">Conecte seu Telegram em minutos e comece a criar automações poderosas.</p>
-      <a href="/app/" class="inline-flex items-center justify-center px-10 py-5 bg-white text-purple-600 text-lg font-bold rounded-xl hover:bg-gray-100 transition-all shadow-2xl hover:scale-105">
+      <a href="/app/" class="inline-flex items-center justify-center px-10 py-5 bg-white text-accent-600 text-lg font-bold rounded-xl hover:bg-gray-100 transition-all shadow-2xl hover:scale-105">
         Criar Minha Conta Grátis
         <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
@@ -389,7 +389,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="max-w-6xl mx-auto">
       <div class="flex flex-col md:flex-row justify-between items-center gap-6">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+          <div class="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center">
             <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
             </svg>

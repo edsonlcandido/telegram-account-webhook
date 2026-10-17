@@ -122,7 +122,7 @@ const goBack = () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50">
+  <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
     <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
       <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -136,7 +136,7 @@ const goBack = () => {
             </button>
           </div>
           <div class="flex items-center">
-            <span class="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            <span class="text-xl font-bold text-brand-600">
               Adicionar Conta
             </span>
           </div>
@@ -154,7 +154,7 @@ const goBack = () => {
             <div 
               class="w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all"
               :class="step === 'phone' || step === 'code' || step === 'success' 
-                ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white' 
+                ? 'bg-brand-500 text-white' 
                 : 'bg-gray-200 text-gray-500'"
             >
               1
@@ -162,14 +162,14 @@ const goBack = () => {
             <span class="ml-3 font-medium text-gray-700">Telefone</span>
           </div>
           
-          <div class="w-16 h-0.5 mx-4" :class="step === 'code' || step === 'success' ? 'bg-gradient-to-r from-blue-500 to-purple-500' : 'bg-gray-200'"></div>
+          <div class="w-16 h-0.5 mx-4" :class="step === 'code' || step === 'success' ? 'bg-brand-500' : 'bg-gray-200'"></div>
           
           <!-- Step 2 -->
           <div class="flex items-center">
             <div 
               class="w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all"
               :class="step === 'code' || step === 'success' 
-                ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white' 
+                ? 'bg-brand-500 text-white' 
                 : 'bg-gray-200 text-gray-500'"
             >
               2
@@ -182,7 +182,7 @@ const goBack = () => {
       <!-- Phone Step -->
       <div v-if="step === 'phone'" class="bg-white rounded-2xl shadow-xl p-8">
         <div class="text-center mb-8">
-          <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div class="w-20 h-20 bg-brand-500 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
             </svg>
@@ -201,7 +201,7 @@ const goBack = () => {
               placeholder="+5511999999999"
               inputmode="tel"
               autocomplete="tel"
-              class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+              class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none transition-colors"
               :class="{ 'border-red-300': phone && !isValidPhone }"
             />
             <p v-if="phone && !isValidPhone" class="mt-2 text-sm text-red-500">
@@ -218,7 +218,7 @@ const goBack = () => {
               type="text"
               maxlength="60"
               placeholder="ex.: Suporte, Vendas, Pessoal"
-              class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+              class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none transition-colors"
               :class="{ 'border-red-300': !isValidName }"
             />
             <p v-if="!isValidName" class="mt-2 text-sm text-red-500">
@@ -232,7 +232,7 @@ const goBack = () => {
           <button
             @click="sendCode"
             :disabled="!isValidPhone"
-            class="w-full py-4 px-6 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg"
+            class="w-full py-4 px-6 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg"
           >
             Enviar código
           </button>
@@ -242,7 +242,7 @@ const goBack = () => {
       <!-- Code Step -->
       <div v-if="step === 'code'" class="bg-white rounded-2xl shadow-xl p-8">
         <div class="text-center mb-8">
-          <div class="w-20 h-20 bg-gradient-to-br from-green-500 to-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div class="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
@@ -264,7 +264,7 @@ const goBack = () => {
               pattern="[0-9]*"
               maxlength="10"
               placeholder="00000"
-              class="w-full px-4 py-4 text-3xl text-center tracking-widest border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+              class="w-full px-4 py-4 text-3xl text-center tracking-widest border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none transition-colors"
               :class="{ 'border-red-300': code && !isValidCode }"
               @keyup.enter="verifyCode"
             />
@@ -276,7 +276,7 @@ const goBack = () => {
           <button
             @click="verifyCode"
             :disabled="!isValidCode"
-            class="w-full py-4 px-6 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg"
+            class="w-full py-4 px-6 bg-green-500 text-white font-bold rounded-xl hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg"
           >
             Verificar código
           </button>
@@ -288,7 +288,7 @@ const goBack = () => {
             <button 
               v-else
               @click="sendCode"
-              class="text-sm text-blue-600 hover:text-blue-700 font-medium"
+              class="text-sm text-brand-600 hover:text-brand-700 font-medium"
             >
               Não recebeu? Reenviar código
             </button>
@@ -299,7 +299,7 @@ const goBack = () => {
       <!-- Loading -->
       <div v-if="step === 'loading'" class="bg-white rounded-2xl shadow-xl p-12">
         <div class="flex flex-col items-center justify-center">
-          <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <div class="w-16 h-16 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
           <p class="mt-6 text-lg font-medium text-gray-700">Processando...</p>
         </div>
       </div>
@@ -307,7 +307,7 @@ const goBack = () => {
       <!-- Success -->
       <div v-if="step === 'success'" class="bg-white rounded-2xl shadow-xl p-8">
         <div class="text-center">
-          <div class="w-20 h-20 bg-gradient-to-br from-green-400 to-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div class="w-20 h-20 bg-green-400 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
@@ -320,7 +320,7 @@ const goBack = () => {
       <!-- Error -->
       <div v-if="step === 'error'" class="bg-white rounded-2xl shadow-xl p-8">
         <div class="text-center">
-          <div class="w-20 h-20 bg-gradient-to-br from-red-400 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div class="w-20 h-20 bg-red-400 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -329,7 +329,7 @@ const goBack = () => {
           <p class="text-red-600">{{ errorMessage }}</p>
           <button
             @click="step = 'phone'; phone = ''; code = ''"
-            class="mt-6 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all"
+            class="mt-6 px-6 py-3 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 transition-all"
           >
             Tentar novamente
           </button>

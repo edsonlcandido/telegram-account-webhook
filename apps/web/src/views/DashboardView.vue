@@ -1,18 +1,18 @@
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50">
+  <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
     <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-16 gap-2">
           <div class="flex items-center min-w-0">
-            <h1 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent truncate">
+            <h1 class="text-xl sm:text-2xl font-bold text-brand-600 truncate">
               Dashboard
             </h1>
           </div>
           <div class="flex items-center gap-2 sm:gap-3">
             <router-link
               to="/docs"
-              class="inline-flex items-center px-2 py-2 sm:px-3 text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+              class="inline-flex items-center px-2 py-2 sm:px-3 text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors"
               title="Documentação da API"
             >
               <svg class="h-5 w-5 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -20,15 +20,15 @@
               </svg>
               <span class="hidden sm:inline">Docs</span>
             </router-link>
-            <div class="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-blue-50 to-purple-50 rounded-full">
-              <div class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+            <div class="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-1.5 sm:py-2 bg-brand-50 rounded-full">
+              <div class="w-7 h-7 sm:w-8 sm:h-8 bg-brand-600 rounded-full flex items-center justify-center flex-shrink-0">
                 <UserCircleIcon class="h-4 w-4 sm:h-5 sm:w-5 text-white" />
               </div>
               <span class="hidden sm:inline text-sm font-semibold text-gray-700 truncate max-w-[8rem]">{{ userName }}</span>
             </div>
             <button
               @click="handleLogout"
-              class="group inline-flex items-center px-2 py-2 sm:px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all transform hover:scale-105 shadow-lg"
+              class="group inline-flex items-center px-2 py-2 sm:px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-red-500 hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all transform hover:scale-105 shadow-lg"
               title="Sair"
             >
               <ArrowRightOnRectangleIcon class="h-5 w-5 sm:mr-2 group-hover:translate-x-1 transition-transform" />
@@ -43,14 +43,14 @@
     <main class="max-w-7xl mx-auto py-8 sm:px-6 lg:px-8">
       <!-- Welcome Section -->
       <div class="px-4 py-6 sm:px-0">
-        <div class="bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 overflow-hidden shadow-2xl rounded-2xl transform hover:scale-[1.02] transition-all">
+        <div class="bg-brand-500 overflow-hidden shadow-2xl rounded-2xl transform hover:scale-[1.02] transition-all">
           <div class="p-5 sm:p-8 text-white">
             <div class="flex items-center justify-between gap-4">
               <div class="min-w-0">
                 <h2 class="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 sm:mb-3 truncate">
                   Olá, {{ userName }}! 👋
                 </h2>
-                <p class="text-blue-100 text-sm sm:text-base md:text-lg">
+                <p class="text-brand-100 text-sm sm:text-base md:text-lg">
                   Gerencie suas contas Telegram e webhooks
                 </p>
               </div>
@@ -68,11 +68,11 @@
       <div class="px-4 py-6 sm:px-0">
         <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           <!-- Stat Card: Contas -->
-          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-blue-200">
+          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-brand-200">
             <div class="p-6">
               <div class="flex items-center">
                 <div class="flex-shrink-0">
-                  <div class="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                  <div class="w-14 h-14 bg-brand-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
                     <svg class="h-7 w-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                     </svg>
@@ -90,8 +90,8 @@
                 </div>
               </div>
             </div>
-            <div class="bg-gradient-to-r from-blue-50 to-blue-100 px-6 py-3">
-              <p class="text-xs text-blue-700 font-medium">
+            <div class="bg-brand-50 px-6 py-3">
+              <p class="text-xs text-brand-700 font-medium">
                 {{ telegramStore.activeSessions().length }} ativa(s)
               </p>
             </div>
@@ -102,7 +102,7 @@
             <div class="p-6">
               <div class="flex items-center">
                 <div class="flex-shrink-0">
-                  <div class="w-14 h-14 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                  <div class="w-14 h-14 bg-accent-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
                     <svg class="h-7 w-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
@@ -120,19 +120,19 @@
                 </div>
               </div>
             </div>
-            <div class="bg-gradient-to-r from-green-50 to-green-100 px-6 py-3">
-              <p class="text-xs text-green-700 font-medium">
+            <div class="bg-accent-50 px-6 py-3">
+              <p class="text-xs text-accent-700 font-medium">
                 {{ telegramStore.sessions.length - configuredWebhooks }} pendente(s)
               </p>
             </div>
           </div>
 
           <!-- Stat Card: Status -->
-          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-purple-200">
+          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-accent-200">
             <div class="p-6">
               <div class="flex items-center">
                 <div class="flex-shrink-0">
-                  <div class="w-14 h-14 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                  <div class="w-14 h-14 bg-green-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
                     <svg class="h-7 w-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -150,8 +150,8 @@
                 </div>
               </div>
             </div>
-            <div class="bg-gradient-to-r from-purple-50 to-purple-100 px-6 py-3">
-              <p class="text-xs text-purple-700 font-medium">
+            <div class="bg-accent-50 px-6 py-3">
+              <p class="text-xs text-accent-700 font-medium">
                 Sistema {{ telegramStore.error ? '⚠️' : '✓' }} ativo
               </p>
             </div>
@@ -172,7 +172,7 @@
             </div>
             <button
               @click="router.push('/add-telegram')"
-              class="w-full sm:w-auto inline-flex items-center justify-center px-5 py-2.5 sm:px-6 sm:py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all transform hover:scale-105 shadow-lg text-sm sm:text-base"
+              class="w-full sm:w-auto inline-flex items-center justify-center px-5 py-2.5 sm:px-6 sm:py-3 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 transition-all transform hover:scale-105 shadow-lg text-sm sm:text-base"
             >
               <PlusIcon class="h-5 w-5 mr-2" />
               Adicionar Conta
@@ -181,7 +181,7 @@
 
           <!-- Loading -->
           <div v-if="telegramStore.loading && telegramStore.sessions.length === 0" class="p-12 flex justify-center">
-            <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <div class="w-12 h-12 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
 
           <!-- Empty State -->
@@ -195,7 +195,7 @@
             <p class="text-gray-500 mb-6">Vincule sua primeira conta Telegram para começar</p>
             <button
               @click="router.push('/add-telegram')"
-              class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all"
+              class="inline-flex items-center px-6 py-3 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 transition-all"
             >
               <PlusIcon class="h-5 w-5 mr-2" />
               Adicionar Conta
@@ -213,7 +213,7 @@
                 <!-- Account Info -->
                 <div class="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                   <!-- Avatar (sempre últimos 4 dígitos do telefone) -->
-                  <div class="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-base sm:text-xl font-bold flex-shrink-0">
+                  <div class="w-12 h-12 sm:w-14 sm:h-14 bg-brand-500 rounded-full flex items-center justify-center text-white text-base sm:text-xl font-bold flex-shrink-0">
                     {{ session.phone.slice(-4) }}
                   </div>
 
@@ -224,7 +224,7 @@
                       </p>
                       <button
                         @click="openRenameModal(session)"
-                        class="text-gray-400 hover:text-blue-600 flex-shrink-0"
+                        class="text-gray-400 hover:text-brand-600 flex-shrink-0"
                         :title="session.name ? 'Editar apelido' : 'Definir apelido'"
                       >
                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -243,7 +243,7 @@
                       </span>
                       <span
                         class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                        :class="session.webhook_count > 0 ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800'"
+                        :class="session.webhook_count > 0 ? 'bg-brand-100 text-brand-800' : 'bg-yellow-100 text-yellow-800'"
                       >
                         {{ session.webhook_count > 0 ? `${session.webhook_count} webhook${session.webhook_count > 1 ? 's' : ''}` : 'Sem webhook' }}
                       </span>
@@ -255,7 +255,7 @@
                 <div class="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3 sm:flex-shrink-0">
                   <button
                     @click="router.push(`/webhooks/${session.session_id}`)"
-                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-blue-300 text-blue-600 font-medium rounded-lg hover:bg-blue-50 transition-colors text-xs sm:text-sm"
+                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-brand-300 text-brand-600 font-medium rounded-lg hover:bg-brand-50 transition-colors text-xs sm:text-sm"
                     :title="session.webhook_count > 0 ? 'Gerenciar webhooks' : 'Configurar primeiro webhook'"
                   >
                     <svg class="h-4 w-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -266,7 +266,7 @@
 
                   <button
                     @click="router.push(`/messages/${session.session_id}`)"
-                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-purple-300 text-purple-600 font-medium rounded-lg hover:bg-purple-50 transition-colors text-xs sm:text-sm"
+                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-accent-300 text-accent-600 font-medium rounded-lg hover:bg-accent-50 transition-colors text-xs sm:text-sm"
                     title="Ver mensagens"
                   >
                     <svg class="h-4 w-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -348,7 +348,7 @@
                 <button
                   @click="executeDelete"
                   :disabled="deleteModal.loading"
-                  class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white font-medium rounded-xl hover:from-red-600 hover:to-pink-600 disabled:opacity-50 transition-all"
+                  class="flex-1 px-4 py-3 bg-red-500 text-white font-medium rounded-xl hover:bg-red-600 disabled:opacity-50 transition-all"
                 >
                   {{ deleteModal.loading ? 'Removendo...' : 'Remover' }}
                 </button>
@@ -380,7 +380,7 @@
                   type="text"
                   maxlength="60"
                   placeholder="ex.: Suporte, Vendas, Pessoal"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none"
                   :disabled="renameModal.saving"
                   @keyup.enter="saveRename"
                 />
@@ -404,7 +404,7 @@
               <button
                 @click="saveRename"
                 :disabled="renameModal.saving"
-                class="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium rounded-xl hover:from-blue-600 hover:to-purple-600 disabled:opacity-50"
+                class="flex-1 px-4 py-3 bg-brand-500 text-white font-medium rounded-xl hover:bg-brand-600 disabled:opacity-50"
               >
                 {{ renameModal.saving ? 'Salvando...' : 'Salvar' }}
               </button>
@@ -432,7 +432,7 @@
                   v-model="sendModal.chatId"
                   type="text"
                   placeholder="123456789 ou @username"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none"
                   :disabled="sendModal.loading"
                 />
               </div>
@@ -445,7 +445,7 @@
                   v-model.number="sendModal.replyTo"
                   type="number"
                   placeholder="ex: 12345"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none"
                   :disabled="sendModal.loading"
                 />
               </div>
@@ -454,7 +454,7 @@
                 <label class="block text-sm font-medium text-gray-700 mb-2">Formato</label>
                 <select
                   v-model="sendModal.parseMode"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none bg-white"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none bg-white"
                   :disabled="sendModal.loading"
                 >
                   <option value="plain">Texto simples</option>
@@ -473,7 +473,7 @@
                   v-model="sendModal.imageUrl"
                   type="url"
                   placeholder="https://exemplo.com/foto.jpg"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none"
                   :disabled="sendModal.loading"
                 />
                 <p class="mt-1 text-xs text-gray-500">
@@ -487,7 +487,7 @@
                   v-model="sendModal.text"
                   rows="4"
                   placeholder="Digite a mensagem..."
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none resize-none"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none resize-none"
                   :disabled="sendModal.loading"
                 ></textarea>
               </div>
@@ -515,7 +515,7 @@
               <button
                 @click="executeSend"
                 :disabled="!canSend || sendModal.loading"
-                class="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium rounded-xl hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 transition-all"
+                class="flex-1 px-4 py-3 bg-brand-500 text-white font-medium rounded-xl hover:bg-brand-600 disabled:opacity-50 transition-all"
               >
                 {{ sendModal.loading ? 'Enviando...' : 'Enviar' }}
               </button>

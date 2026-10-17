@@ -261,7 +261,7 @@ function goBack() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50">
+  <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
     <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
       <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -275,7 +275,7 @@ function goBack() {
             </button>
           </div>
           <div class="flex items-center gap-3">
-            <span class="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            <span class="text-xl font-bold text-brand-600">
               Webhooks
             </span>
           </div>
@@ -296,7 +296,7 @@ function goBack() {
           </div>
           <button
             @click="openCreateModal"
-            class="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all transform hover:scale-105 shadow-lg"
+            class="inline-flex items-center px-4 py-2 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 transition-all transform hover:scale-105 shadow-lg"
           >
             <svg class="h-5 w-5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -308,7 +308,7 @@ function goBack() {
 
       <!-- Loading -->
       <div v-if="loading && webhooks.length === 0" class="p-12 flex justify-center">
-        <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        <div class="w-12 h-12 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
       </div>
 
       <!-- Empty state -->
@@ -322,7 +322,7 @@ function goBack() {
         <p class="text-gray-500 mb-6">Cada webhook pode ter filtros próprios (direção, tipo de chat, texto).</p>
         <button
           @click="openCreateModal"
-          class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all"
+          class="inline-flex items-center px-6 py-3 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 transition-all"
         >
           Criar primeiro webhook
         </button>
@@ -355,7 +355,7 @@ function goBack() {
             <div class="flex flex-col gap-2 flex-shrink-0">
               <button
                 @click="openEditModal(wh)"
-                class="text-xs px-3 py-1.5 border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50 font-medium"
+                class="text-xs px-3 py-1.5 border border-brand-300 text-brand-600 rounded-lg hover:bg-brand-50 font-medium"
               >
                 Editar
               </button>
@@ -371,7 +371,7 @@ function goBack() {
                 :disabled="togglingId === wh.id"
                 :class="wh.enabled
                   ? 'border-orange-300 text-orange-600 hover:bg-orange-50'
-                  : 'border-purple-300 text-purple-600 hover:bg-purple-50'"
+                  : 'border-accent-300 text-accent-600 hover:bg-accent-50'"
                 class="text-xs px-3 py-1.5 border rounded-lg font-medium disabled:opacity-50"
               >
                 {{ togglingId === wh.id ? '...' : (wh.enabled ? 'Pausar' : 'Retomar') }}
@@ -415,7 +415,7 @@ function goBack() {
                   type="text"
                   maxlength="60"
                   placeholder="ex.: Ativação de plugin"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none"
                   :disabled="form.saving"
                 />
               </div>
@@ -426,7 +426,7 @@ function goBack() {
                   v-model="form.url"
                   type="url"
                   placeholder="https://seu-servico.com/webhook"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none font-mono text-sm"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none font-mono text-sm"
                   :class="{ 'border-red-300': form.url && !form.url.startsWith('http') }"
                   :disabled="form.saving"
                 />
@@ -440,7 +440,7 @@ function goBack() {
                   id="enabled"
                   v-model="form.enabled"
                   type="checkbox"
-                  class="w-4 h-4 text-blue-600 rounded"
+                  class="w-4 h-4 text-brand-600 rounded"
                   :disabled="form.saving"
                 />
                 <label for="enabled" class="text-sm text-gray-700">Webhook ativo</label>
@@ -534,7 +534,7 @@ function goBack() {
               <button
                 @click="saveForm"
                 :disabled="!canSave"
-                class="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium rounded-xl hover:from-blue-600 hover:to-purple-600 disabled:opacity-50"
+                class="flex-1 px-4 py-3 bg-brand-500 text-white font-medium rounded-xl hover:bg-brand-600 disabled:opacity-50"
               >
                 {{ form.saving ? 'Salvando...' : (form.webhookId ? 'Salvar' : 'Criar') }}
               </button>
@@ -571,7 +571,7 @@ function goBack() {
                 <button
                   @click="executeRemove"
                   :disabled="confirmRemove.loading"
-                  class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white font-medium rounded-xl hover:from-red-600 hover:to-pink-600 disabled:opacity-50"
+                  class="flex-1 px-4 py-3 bg-red-500 text-white font-medium rounded-xl hover:bg-red-600 disabled:opacity-50"
                 >
                   {{ confirmRemove.loading ? 'Removendo...' : 'Remover' }}
                 </button>
