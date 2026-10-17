@@ -294,10 +294,22 @@ mcp__easypanel-bleach execute_destructive({
   forceRebuild: true,
 })
 #    Espera 3-5min e checa se subiu:
-curl -sS -m 10 https://telegram-webhook.ehtudo.app/health
-#    (esse endpoint do /app/ é servido pelo PB, mas se o build tiver
-#    quebrado vai dar 502 ou não responder)
+curl -sS -m 10 https://telegram-webhook.ehtudo.app/api/health
+#    (esse endpoint é servido pelo PB 0.40 — NÃO é /health, que dá 404)
+#    (se o build tiver quebrado vai dar 502 ou não responder)
 ```
+
+> **Como confirmar que o bundle novo (e não o antigo, servido do cache do
+> navegador) está no ar:** pegue o hash do build local em `apps/web/dist/`
+> e compare com o que o HTML referencia. Só o **CSS** tem hash idêntico ao
+> local — o JS diverge porque o build dentro do container inlineia env vars
+> diferentes. Para checar o conteúdo de vez, faça grep do token:
+>
+> ```bash
+> curl -s https://telegram-webhook.ehtudo.app/app/assets/index-XXXX.css | grep -c 'color-brand-500:#229ed9'
+> curl -s https://telegram-webhook.ehtudo.app/app/assets/index-YYYY.js  | grep -c 'bg-brand-500'
+> curl -s https://telegram-webhook.ehtudo.app/css/style.css           | grep -c 'color-accent-500:#7c5cfc'
+> ```
 
 ### Área 2 — PocketBase (pocketbase/**)
 
