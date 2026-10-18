@@ -859,6 +859,9 @@ async def handle_new_message(event, session_id: str):
                         f"{POCKETBASE_URL}/api/collections/telegram_messages/records",
                         json={
                             "session": pb_session_id,
+                            # ID da mensagem no Telegram (único por chat).
+                            # Diferente do `id` do record no PB.
+                            "telegram_message_id": int(event.id),
                             "chat_id": int(event.chat_id or 0),
                             "chat_type": chat_type,
                             "chat_title": chat_title,
@@ -1993,6 +1996,9 @@ async def _audit_outgoing_message(
     # 5) INSERT
     payload = {
         "session": pb_session_id,
+        # ID da mensagem no Telegram (único por chat). Diferente do `id`
+        # do record no PB.
+        "telegram_message_id": int(sent.id),
         "chat_id": int(sent.chat_id or 0),
         "chat_type": chat_type,
         "chat_title": chat_title,

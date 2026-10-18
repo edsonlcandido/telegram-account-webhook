@@ -18,6 +18,15 @@ export interface TelegramMessage {
   collectionName: string
   /** pb_id do record em `telegram_sessions` (relation). */
   session: string
+  /**
+   * ID da mensagem no Telegram (`event.id` do Telethon) — diferente do `id`
+   * do record no PB. Único **por chat**, não global: o mesmo id (1, 2, 3...)
+   * reaparece em todo chat novo.
+   *
+   * `0` = registro legado, inserido antes desse campo existir (PB guarda
+   * number field não preenchido como 0, não null — validado com PB 0.40.5).
+   */
+  telegram_message_id: number
   chat_id: number
   chat_type: ChatType
   chat_title: string

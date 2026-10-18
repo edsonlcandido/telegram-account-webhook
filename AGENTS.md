@@ -114,7 +114,7 @@ POCKETBASE_ADMIN_PASSWORD=...                # Auto-refresh: re-autentica 5min a
 - `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
   - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
   - **Esta é a lista que o FastAPI consulta no `handle_new_message` pra fazer o forwarding.**
-- `telegram_messages`: audit log. Append-only (updateRule/deleteRule = null). Schema: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
+- `telegram_messages`: audit log. Append-only (updateRule/deleteRule = null). Schema: `session` (relation), `telegram_message_id` (id da msg no Telegram, `event.id`; único **por chat**, `0` = registro legado sem o campo), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. Índice composto `(session, chat_id, telegram_message_id)` — NON-unique de propósito, o mesmo `message_id` reaparece em cada chat novo. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
 
 ## API Backend
 
