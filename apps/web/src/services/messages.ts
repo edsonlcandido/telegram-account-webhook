@@ -37,6 +37,11 @@ export interface ListMessagesParams {
   sort?: string
   /** ISO 8601. Se setado, retorna só msgs com `created > since` (poll incremental). */
   since?: string
+  /**
+   * ISO 8601 (cursor). Se setado, retorna só msgs com `created < before`
+   * — a página imediatamente mais antiga. Usado pelo "carregar mais".
+   */
+  before?: string
   /** all | incoming | outgoing */
   directionFilter?: 'all' | MessageDirection
   /** all | private | group | supergroup | channel */
@@ -100,14 +105,20 @@ export async function listMessagesByPbId(
   const {
     page = 1,
     perPage = 200,
-    // Sort por `-id` (não `-created`) — o log do PB 0.40.5 dessa
-    // coleção retorna "invalid sort field \"created\"" (possivelmente
-    // o auto-field `created` ficou fora do sort whitelist após as
-    // migrations 1792063175/1791990597). O id do PB é gerado em ordem
-    // cronológica (nanoid com timestamp prefix), então `-id` dá o
-    // mesmo resultado de "mais recente primeiro".
-    sort = '-created,-id',
+    // `-created` é o único sort confiável desta collection.
+    //
+    // Registros anteriores à migration 1792126938 (que adicionou o field
+    // `created`) têm `created = ''`. String vazia ordena ANTES de
+    // qualquer data no SQLite, então em DESC essas linhas vão para o
+    // fim — é por isso que a paginação precisa ser por CURSOR (`before`)
+    // e não por offset: `page=N` anda junto com o cursor.
+    //
+    // NÃO voltar para `-id`: o id do PB é `r||lower(hex(randomblob(7)))`
+    // (confirmado no schema SQLite) — aleatório, SEM timestamp.
+    // `-id` não é "ordem cronológica", é amostragem aleatória.
+    sort = '-created',
     since,
+    before,
     directionFilter = 'all',
     chatTypeFilter = 'all',
     textSearch,
@@ -118,6 +129,9 @@ export async function listMessagesByPbId(
   ]
   if (since) {
     filterParts.push(`created>"${escapeFilterValue(since)}"`)
+  }
+  if (before) {
+    filterParts.push(`created<"${escapeFilterValue(before)}"`)
   }
   if (directionFilter !== 'all') {
     filterParts.push(`direction="${directionFilter}"`)
@@ -158,6 +172,36 @@ function escapeFilterValue(value: string): string {
 // Grouping
 // =============================================================================
 
+/**
+ * Cursor pra próxima página mais antiga: o menor `created` **não-vazio**
+ * do cache.
+ *
+ * Registros legados (pré-migration 1792126938) têm `created = ''` e por
+ * isso são ignorados aqui como âncora — mas continuam alcançáveis pelo
+ * filtro `created<"..."`, já que string vazia ordena antes de qualquer
+ * data. Se TODOS os registros do cache forem legados, retorna `''` e não
+ * há mais o que carregar.
+ */
+export function oldestCreated(messages: TelegramMessage[]): string {
+  let oldest = ''
+  for (const m of messages) {
+    const c = m.created || ''
+    if (!c) continue
+    if (oldest === '' || c < oldest) oldest = c
+  }
+  return oldest
+}
+
+/**
+ * Ordena por `created` ASC (string vazia primeiro — são as mais antigas).
+ * Mantém o cache num estado previsível: o poll incremental usa
+ * `cache[cache.length - 1].created` como cursor `since`, então o último
+ * elemento tem que ser sempre a mensagem mais recente.
+ */
+export function sortByCreatedAsc(messages: TelegramMessage[]): TelegramMessage[] {
+  return [...messages].sort((a, b) => (a.created || '').localeCompare(b.created || ''))
+}
+
 export interface ChatGroup {
   chat_id: number
   /** Título mais recente não-vazio. Fallback `#<chat_id>` se nunca teve. */
@@ -187,7 +231,7 @@ export function groupByChat(messages: TelegramMessage[]): ChatGroup[] {
 
   const groups: ChatGroup[] = []
   for (const msgs of byChatId.values()) {
-    msgs.sort((a, b) => a.created.localeCompare(b.created))
+    msgs.sort((a, b) => (a.created || '').localeCompare(b.created || ''))
     const last = msgs[msgs.length - 1]
     // Pega o título mais recente não-vazio (se o chat mudou de nome).
     let title = ''
@@ -207,7 +251,9 @@ export function groupByChat(messages: TelegramMessage[]): ChatGroup[] {
   }
 
   // Última mensagem desc
-  groups.sort((a, b) => b.lastMessage.created.localeCompare(a.lastMessage.created))
+  groups.sort((a, b) =>
+    (b.lastMessage.created || '').localeCompare(a.lastMessage.created || ''),
+  )
   return groups
 }
 
