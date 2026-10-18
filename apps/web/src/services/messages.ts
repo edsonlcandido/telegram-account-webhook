@@ -106,7 +106,7 @@ export async function listMessagesByPbId(
     // migrations 1792063175/1791990597). O id do PB é gerado em ordem
     // cronológica (nanoid com timestamp prefix), então `-id` dá o
     // mesmo resultado de "mais recente primeiro".
-    sort = '-id',
+    sort = '-created',
     since,
     directionFilter = 'all',
     chatTypeFilter = 'all',
