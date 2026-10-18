@@ -333,9 +333,15 @@
               </div>
 
               <h3 class="text-xl font-bold text-gray-900 mb-2">Remover conta?</h3>
-              <p class="text-gray-600 mb-6">
-                Tem certeza que deseja remover a conta <strong>{{ deleteModal.session?.phone }}</strong>? 
+              <p class="text-gray-600 mb-3">
+                Tem certeza que deseja remover a conta <strong>{{ deleteModal.session?.phone }}</strong>?
                 Esta ação não pode ser desfeita.
+              </p>
+              <p class="text-xs text-left text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-6 leading-relaxed">
+                A conta é desconectada e apagada do servidor. No PocketBase o
+                registro da sessão também é removido, e isso apaga
+                <strong>todos os webhooks</strong> e
+                <strong>todas as mensagens</strong> do histórico.
               </p>
 
               <div class="flex gap-4">

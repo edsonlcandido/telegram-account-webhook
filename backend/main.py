@@ -1623,17 +1623,74 @@ async def list_sessions(
 # 5. Remover sessão
 # -----------------------------------------------------------------------------
 @app.delete("/api/session/{session_id}")
-async def delete_session(session_id: str, _user: dict = Depends(verify_pb_auth)):
-    """Remove uma sessão (desconecta cliente ativo, remove arquivo + cache)."""
+async def delete_session(
+    session_id: str,
+    _user: dict = Depends(verify_pb_auth),
+    user_token: str = Depends(get_user_token),
+):
+    """Remove uma sessão inteira: cliente ativo, arquivo em disco e
+    record no PocketBase.
+
+    O DELETE no PB é o que importa pra integridade: as relations
+    `telegram_webhooks.session` e `telegram_messages.session` são
+    `cascadeDelete = true`, então apagar o record da sessão arrasta os
+    webhooks e TODO o histórico de mensagens junto.
+
+    Sem isso o PB acumulava sessões zumbis: `list_sessions` monta a
+    lista a partir dos ARQUIVOS em disco (`load_sessions()`), não do PB
+    — então a conta sumia da UI, mas o record, os webhooks e as
+    mensagens ficavam no banco para sempre.
+    """
     # Desconecta cliente ativo
     if session_id in active_clients:
         await active_clients[session_id].disconnect()
         del active_clients[session_id]
 
-    # Remove arquivo
+    # Remove arquivo (fonte de verdade da credencial)
     delete_session_file(session_id)
 
-    return {"success": True}
+    # Remove o record no PB (cascade de webhooks + mensagens)
+    deleted_in_pb = await _delete_session_record_pb(session_id, user_token)
+    if not deleted_in_pb:
+        logger.warning(
+            f"⚠️ Sessão {session_id} removida do disco mas o record no PB "
+            f"não foi deletado — sobraram mensagens/webhooks órfãos"
+        )
+
+    return {"success": True, "deleted_pb_record": deleted_in_pb}
+
+
+async def _delete_session_record_pb(session_id: str, user_token: str) -> bool:
+    """Apaga o record de `telegram_sessions` no PB (cascade de webhooks
+    + mensagens).
+    
+    Idempotente: se o record não existir mais (404) retorna False sem
+    estourar erro — o objetivo é o banco limpo, não o status HTTP.
+    """
+    pb_id = await _resolve_pb_session_id(session_id, user_token)
+    if not pb_id:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.delete(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
+                headers=pb_headers(user_token),
+            )
+        if r.status_code == 404:
+            return False
+        if r.status_code >= 300:
+            logger.warning(
+                f"PB recusou DELETE da sessão {session_id}: "
+                f"{r.status_code} {r.text[:200]}"
+            )
+            return False
+        logger.info(
+            f"🗑️ Sessão removida do PB (cascade webhooks+mensagens): {session_id}"
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"Falha ao remover sessão {session_id} do PB: {e}")
+        return False
 
 
 # =============================================================================

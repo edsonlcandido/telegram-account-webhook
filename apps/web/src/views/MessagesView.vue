@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTelegramStore } from '../stores/telegram'
 import { messagesForChat, type TelegramMessage, type ChatGroup } from '../services/messages'
 import { telegramApi } from '../services/telegram'
 import {
+  ArrowDownIcon,
   ArrowLeftIcon,
   ArrowPathIcon,
   ChatBubbleLeftRightIcon,
@@ -59,8 +60,10 @@ const accountLabel = computed(() => {
 
 const allMessages = computed<TelegramMessage[]>(
   () => telegramStore.messagesBySession[currentSessionId.value] || [],
-)
+ )
 
+/** Estado de paginação da sessão atual (cursor por `created`). */
+const paging = computed(() => telegramStore.messagesPaging[currentSessionId.value] || null)
 const chats = computed<ChatGroup[]>(() => {
   const list = telegramStore.chatsBySession[currentSessionId.value] || []
   let filtered = list
@@ -179,6 +182,32 @@ async function pollOnce() {
   if (telegramStore.messagesInFlight[currentSessionId.value]) return
   await telegramStore.prependMessages(currentSessionId.value)
   scrollMessagesToBottom()
+}
+
+/**
+ * Carrega a página mais antiga de mensagens.
+ *
+ * As mensagens mais antigas entram no TOPO da conversa, então quem
+ * estivesse no meio da lista levaria um pulo visual. Compensa pela
+ * diferença de altura antes/depois do render pra manter o mesmo
+ * conteúdo na tela.
+ */
+async function loadMore() {
+  const sid = currentSessionId.value
+  if (!sid || !paging.value?.hasMore || paging.value.loadingMore) return
+  const el = messagesListEl.value
+  const prevHeight = el?.scrollHeight ?? 0
+  const prevTop = el?.scrollTop ?? 0
+  try {
+    await telegramStore.loadMoreMessages(sid)
+  } catch {
+    // erro fica em telegramStore.messagesError
+    return
+  }
+  await nextTick()
+  if (el) {
+    el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+  }
 }
 
 // =============================================================================
@@ -521,6 +550,30 @@ function goBack() {
                 </div>
               </div>
             </button>
+          </div>
+
+          <!-- Carregar mais mensagens (paginação por cursor em `created`) -->
+          <div
+            v-if="paging && paging.hasMore"
+            class="px-3 py-2 border-t border-gray-200"
+          >
+            <button
+              @click="loadMore"
+              :disabled="paging.loadingMore"
+              class="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <ArrowDownIcon
+                class="h-4 w-4"
+                :class="{ 'animate-bounce': paging.loadingMore }"
+              />
+              {{ paging.loadingMore ? 'Carregando...' : 'Carregar mais mensagens' }}
+            </button>
+            <p
+              v-if="paging.totalItems > 0"
+              class="text-[10px] text-gray-400 text-center mt-1"
+            >
+              {{ allMessages.length }} de {{ paging.totalItems }} mensagens
+            </p>
           </div>
 
           <div

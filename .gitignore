@@ -47,3 +47,4 @@ coverage
 pnpm-lock.yaml
 __pycache__/
 *.pyc
+pb_data

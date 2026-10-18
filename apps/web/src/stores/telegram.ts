@@ -5,10 +5,29 @@ import {
   listMessagesByPbId,
   getSessionPbId,
   groupByChat,
+  oldestCreated,
+  sortByCreatedAsc,
   type TelegramMessage,
   type ChatGroup,
   type ListMessagesParams,
 } from '../services/messages'
+
+/**
+ * Estado de paginação de `telegram_messages` por sessão.
+ *
+ * A paginação é por CURSOR (`created < oldestCreated`), não por offset
+ * (`page=N`). Com `-created` + offset, cada mensagem nova que chega
+ * desloca as páginas e o usuário pula mensagens ao clicar duas vezes.
+ * O cursor é estável mesmo com tráfego chegando.
+ */
+export interface MessagesPaging {
+  perPage: number
+  loadedPages: number
+  /** `totalItems` reportado pelo PB na primeira página (0 se não vier). */
+  totalItems: number
+  hasMore: boolean
+  loadingMore: boolean
+}
 
 export const useTelegramStore = defineStore('telegram', () => {
   // Estado
@@ -30,6 +49,9 @@ export const useTelegramStore = defineStore('telegram', () => {
   const chatsBySession = ref<Record<string, ChatGroup[]>>({})
   // Flag `inFlight` por session_id — evita fetch concorrente.
   const messagesInFlight = ref<Record<string, boolean>>({})
+  // Paginação por session_id — alimenta o botão "carregar mais" da
+  // sidebar. Criado no 1º fetch e consumido por `loadMoreMessages`.
+  const messagesPaging = ref<Record<string, MessagesPaging>>({})
   const messagesError = ref('')
   // Mapeamento `session.session_id` (texto) → `pb_id` (record id em
   // `telegram_sessions`). Cacheado pra não resolver a cada poll.
@@ -162,9 +184,20 @@ export const useTelegramStore = defineStore('telegram', () => {
     try {
       const pbId = await resolveSessionPbId(sessionId)
       const result = await listMessagesByPbId(pbId, params)
-      messagesBySession.value[sessionId] = result.items
-      chatsBySession.value[sessionId] = groupByChat(result.items)
-      return result.items
+      const items = sortByCreatedAsc(result.items)
+      messagesBySession.value[sessionId] = items
+      chatsBySession.value[sessionId] = groupByChat(items)
+      messagesPaging.value[sessionId] = {
+        perPage: result.perPage,
+        loadedPages: 1,
+        totalItems: result.totalItems,
+        // Página cheia E com pelo menos uma data real = ainda tem coisa
+        // mais antiga. Página cheia só com `created = ''` é o fim da
+        // lista (não existe nada mais velho que string vazia).
+        hasMore: items.length === result.perPage && items.some((m) => !!m.created),
+        loadingMore: false,
+      }
+      return items
     } catch (e: any) {
       messagesError.value = e?.message || 'Erro ao buscar mensagens'
       throw e
@@ -212,9 +245,7 @@ export const useTelegramStore = defineStore('telegram', () => {
       if (fresh.length === 0) {
         return existing
       }
-      const merged = [...existing, ...fresh].sort((a, b) =>
-        a.created.localeCompare(b.created),
-      )
+      const merged = sortByCreatedAsc([...existing, ...fresh])
       messagesBySession.value[sessionId] = merged
       chatsBySession.value[sessionId] = groupByChat(merged)
       return merged
@@ -227,10 +258,65 @@ export const useTelegramStore = defineStore('telegram', () => {
     }
   }
 
+  /**
+   * Carrega a página imediatamente mais antiga (cursor
+   * `created < oldestCreated`), mergeia no cache, dedupe por `id` e
+   * recomputa o group-by-chat.
+   *
+   * Por que isso recupera as conversas que sumiram: registros legados
+   * (pré-migration 1792126938) têm `created = ''`, que ordena antes de
+   * qualquer data — então eles ficam no FUNDO do `-created` e nunca
+   * entram na primeira página. O cursor `created<"..."` caminha até eles
+   * e traz o chat de volta.
+   *
+   * Não mexe no scroll: quem chamou decide (a view preserva o offset).
+   */
+  async function loadMoreMessages(
+    sessionId: string,
+    perPage?: number,
+  ): Promise<TelegramMessage[]> {
+    const existing = messagesBySession.value[sessionId] || []
+    const paging = messagesPaging.value[sessionId]
+    if (!paging || paging.loadingMore || !paging.hasMore) return existing
+    // Serializa com o poll incremental — os dois escrevem no mesmo cache.
+    if (messagesInFlight.value[sessionId]) return existing
+
+    const before = oldestCreated(existing)
+    if (!before) {
+      // Só tem registro legado em cache — não há cursor possível.
+      paging.hasMore = false
+      return existing
+    }
+    const size = perPage || paging.perPage
+    paging.loadingMore = true
+    messagesInFlight.value[sessionId] = true
+    try {
+      const pbId = await resolveSessionPbId(sessionId)
+      const result = await listMessagesByPbId(pbId, { before, perPage: size })
+      const known = new Set(existing.map((m) => m.id))
+      const fresh = result.items.filter((m) => !known.has(m.id))
+      const merged = sortByCreatedAsc([...existing, ...fresh])
+      messagesBySession.value[sessionId] = merged
+      chatsBySession.value[sessionId] = groupByChat(merged)
+      paging.loadedPages += 1
+      // Página cheia E com data real = tem mais. Cheia só com `''` = fim.
+      paging.hasMore =
+        result.items.length === size && result.items.some((m) => !!m.created)
+      return merged
+    } catch (e: any) {
+      messagesError.value = e?.message || 'Erro ao carregar mais mensagens'
+      throw e
+    } finally {
+      paging.loadingMore = false
+      delete messagesInFlight.value[sessionId]
+    }
+  }
+
   function invalidateMessages(sessionId: string) {
     delete messagesBySession.value[sessionId]
     delete chatsBySession.value[sessionId]
     delete messagesInFlight.value[sessionId]
+    delete messagesPaging.value[sessionId]
   }
 
   return {
@@ -242,6 +328,7 @@ export const useTelegramStore = defineStore('telegram', () => {
     chatsBySession,
     messagesError,
     messagesInFlight,
+    messagesPaging,
     activeSessions,
     totalSessions,
     fetchSessions,
@@ -255,6 +342,7 @@ export const useTelegramStore = defineStore('telegram', () => {
     toggleWebhook,
     fetchMessages,
     prependMessages,
+    loadMoreMessages,
     invalidateMessages,
   }
 })
