@@ -82,7 +82,7 @@ const sendCode = async () => {
 
 // Verificar código
 const verifyCode = async () => {
-  if (!isValidCode.value) return
+  if (!isValidCode.value || !isValidName.value) return
 
   step.value = 'loading'
   errorMessage.value = ''
@@ -90,7 +90,11 @@ const verifyCode = async () => {
   const fullPhone = phone.value
 
   try {
-    await telegramApi.verifyCode(fullPhone, code.value)
+    // O 3º argumento (`name`) é o "Apelido da conta" preenchido no passo
+    // anterior. Sem ele o backend recebia `name=None` e criava o record
+    // no PB com o apelido vazio — o usuario preenchia o campo e ele
+    // simplesmente sumia (so aparecia depois de editar a sessao).
+    await telegramApi.verifyCode(fullPhone, code.value, name.value)
     step.value = 'success'
     
     // Redireciona após 2 segundos
