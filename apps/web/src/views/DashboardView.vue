@@ -276,19 +276,6 @@
                   </button>
 
                   <button
-                    @click="openSendModal(session)"
-                    class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-green-300 text-green-600 font-medium rounded-lg hover:bg-green-50 transition-colors text-xs sm:text-sm"
-                    :disabled="!session.active"
-                    :title="session.active ? 'Enviar mensagem' : 'Sessão offline'"
-                    :class="{ 'opacity-50 cursor-not-allowed': !session.active }"
-                  >
-                    <svg class="h-4 w-4 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                    <span class="hidden sm:inline">Mensagem</span>
-                  </button>
-
-                  <button
                     @click="confirmDelete(session)"
                     class="inline-flex items-center justify-center px-2 py-2 sm:px-4 sm:py-2 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors text-xs sm:text-sm"
                     title="Remover conta"
