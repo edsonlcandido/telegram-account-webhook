@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import AppNav from '../components/AppNav.vue'
+import IntegrationTokenCard from '../components/IntegrationTokenCard.vue'
 
 // Blocos de payload prontos pra copiar.
 // IMPORTANTE: payloads aqui têm que refletir EXATAMENTE o que o FastAPI
@@ -128,11 +129,25 @@ const TEST_PAYLOAD = JSON.stringify(
   2,
 )
 
-const CURL_REPLY = `# Responde à mensagem que chegou no webhook. Requer o token PB.
+// Token de integração gerado pelo `IntegrationTokenCard` (seção 2). Enquanto
+// for `null`, o curl de exemplo mostra o placeholder — gerou token, mostra o
+// token de verdade. Não é persistido em lugar nenhum: recarregar a página zera.
+const integrationToken = ref<string | null>(null)
+
+function onTokenGenerated(token: string | null) {
+  integrationToken.value = token
+}
+
+/** Botão "Copiar curl completo" do card de token — usa o mesmo helper de copy. */
+function copyIntegrationCurl() {
+  copy('curl', CURL_REPLY.value)
+}
+
+const CURL_REPLY = computed(() => `# Responde à mensagem que chegou no webhook. Requer o token PB.
 curl -X POST https://api-telegram.ehtudo.app/api/send-message \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: SEU_TOKEN_PB" \\
-  -d '${SEND_MESSAGE_PAYLOAD.replace(/\n/g, '')}'`
+  -H "Authorization: ${integrationToken.value ?? 'SEU_TOKEN_PB'}" \\
+  -d '${SEND_MESSAGE_PAYLOAD.replace(/\n/g, '')}'`)
 
 // Estado do botão "Copiar" (qual bloco foi copiado por último)
 const copied = ref<string | null>(null)
@@ -370,6 +385,9 @@ async function copy(key: string, text: string) {
         </div>
 
         <div class="p-6 space-y-6">
+          <!-- Token de integração: gera o header Authorization pra usar fora -->
+          <IntegrationTokenCard @generated="onTokenGenerated" @copy-curl="copyIntegrationCurl" />
+
           <div>
             <p class="font-semibold text-gray-800 mb-2">Request</p>
             <div class="bg-gray-50 rounded-xl p-3 text-xs font-mono text-gray-700 mb-3">
@@ -568,7 +586,9 @@ async function copy(key: string, text: string) {
             <p>
               <strong>Token PB obrigatório.</strong> O <code>/api/send-message</code>
               exige o JWT do PocketBase no header <code>Authorization</code> (o frontend
-              pega do <code>pb.authStore.token</code> automaticamente).
+              pega do <code>pb.authStore.token</code> automaticamente). Pra usar de fora,
+              gere o seu no card <strong>"Token de integração"</strong> lá em cima na
+              seção 2.
             </p>
           </div>
           <div class="flex gap-3">

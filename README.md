@@ -229,6 +229,7 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 | `POST` | `/api/webhooks/{webhook_id}/toggle` | sim | Liga/desliga sem deletar |
 | `POST` | `/api/webhooks/{webhook_id}/test` | sim | Dispara evento de teste (payload completo) |
 | `POST` | `/api/send-message` | sim | Envia mensagem via sessão. Aceita `text` (opcional se tem `image_url`), `parse_mode` (`plain`/`html`), `image_url` (URL pública validada contra SSRF), `reply_to_message_id`. Schema completo na seção "Enviar mensagem". |
+| `POST` | `/api/integration-token` | sim | Gera um token do PB pro usuário logado (via endpoint `impersonate`), pra usar de fora. Ver "Token de integração". |
 | `GET` | `/api/admin/sessions` | sim | Lista arquivos em `/app/sessions/*.json` (debug) |
 
 **Auth:** `Authorization: Bearer <jwt-do-pocketbase>`. O middleware `verify_pb_auth` valida contra o PB.
@@ -333,6 +334,11 @@ Envia uma mensagem (texto, foto, ou ambos) via uma sessão Telegram ativa. Esse 
 
 **Auth:** `Authorization: Bearer <jwt-do-pocketbase>`.
 
+> **Precisa de um token e está fora do painel?** Gere o seu em `/app/docs`, no card
+> **"Token de integração"** (seção 2 da documentação da API). Ele vira o header
+> `Authorization` pra qualquer sistema externo — n8n, Make, backend próprio.
+> Detalhes em "Token de integração".
+
 **Request body:**
 
 ```json
@@ -415,6 +421,71 @@ Envia uma mensagem (texto, foto, ou ambos) via uma sessão Telegram ativa. Esse 
 5. Telethon emite outgoing event → handler INSERT em telegram_messages
    (audit), mas SUPRIME o POST pro n8n (já viu essa msg em < 10s)
 ```
+
+---
+
+## Token de integração (`POST /api/integration-token`)
+
+Pra chamar o `/api/send-message` (ou qualquer outro endpoint) **de fora do
+painel** — n8n, Make, backend próprio — você precisa de um token no header
+`Authorization`. O JWT da sessão do navegador expira, então não serve pra
+automação.
+
+O painel gera um token sob demanda em **`/app/docs`**, no card **"Token de
+integração"** (seção 2 da documentação da API). O botão chama o endpoint
+`impersonate` do PocketBase, que é o mesmo mecanismo do **Impersonate** do Admin
+UI.
+
+**Request body (opcional):**
+
+```json
+{ "duration": 2592000 }
+```
+
+| Campo | Tipo | Default | Descrição |
+|---|---|---|---|
+| `duration` | `int` (segundos) | `2592000` (30 dias) | Validade do token. Clamp no servidor: mínimo `300` (5 min), máximo `31536000` (365 dias). |
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "token": "eyJhbGciOi...",
+  "expires_at": 1792966160,
+  "duration": 2592000,
+  "user": { "id": "...", "email": "voce@exemplo.com" }
+}
+```
+
+**Exemplo com curl:**
+
+```bash
+curl -X POST https://api-telegram.ehtudo.app/api/integration-token \
+  -H "Content-Type: application/json" \
+  -H "Authorization: <SEU_JWT_DO_PAINEL>" \
+  -d '{"duration": 2592000}'
+```
+
+### O que você precisa saber antes de usar
+
+- **O token é do usuário que está logado.** O endpoint não aceita `user_id` no
+  body — o id vem do JWT verificado. Ninguém consegue pedir token de outra conta.
+- **É estático: não renova.** O `impersonate` do PB gera um token com `exp` fixo.
+  Quando vence, você gera outro.
+- **Não tem revogação individual.** O PB é stateless e não tem endpoint de
+  logout. Gerar outro token **não** invalida o anterior — os dois valem até o
+  próprio prazo. Para invalidar de verdade, troque a senha do usuário no Admin UI
+  do PB (isso rotaciona o `tokenKey` dele e derruba todos os tokens dele).
+- **Escopo = usuário inteiro, não só `send-message`.** Quem tiver o token também
+  pode criar/deletar webhooks e sessões. Trate como credencial sensível: variable
+  de ambiente no sistema externo, nunca no git.
+- **Não é persistido.** Nem no PB (é stateless), nem no navegador. O card mostra
+  uma vez; se você sair da página sem copiar, perdeu.
+
+**Erros:** `401` não autenticado · `404` usuário não encontrado no PB ·
+`502` o PB recusou a geração · `503` superuser do PB não configurado (falta
+`POCKETBASE_SERVICE_TOKEN` ou `POCKETBASE_ADMIN_EMAIL`+`PASSWORD` no serviço).
 
 ---
 

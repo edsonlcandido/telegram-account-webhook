@@ -88,6 +88,32 @@ export interface SendMessageResponse {
 export type ParseMode = 'plain' | 'html'
 
 /**
+ * Resposta do POST /api/integration-token.
+ *
+ * O `token` é um JWT do PocketBase gerado via endpoint `impersonate` — estático
+ * (não renova, não tem revogação individual) e de escopo equivalente ao do
+ * usuário que o gerou. `expires_at` é epoch em SEGUNDOS (claim `exp` do JWT).
+ */
+export interface IntegrationTokenResponse {
+  success: boolean
+  token: string
+  /** Epoch em segundos. 0 = o backend não conseguiu ler o `exp`. */
+  expires_at: number
+  /** Duração efetivamente aplicada, em segundos (já com clamp do servidor). */
+  duration: number
+  user: {
+    id: string
+    email: string
+  }
+}
+
+/** Body do POST /api/integration-token. */
+export interface IntegrationTokenInput {
+  /** Validade em segundos. Ausente = default do servidor (30 dias). */
+  duration?: number
+}
+
+/**
  * Body do POST /api/send-message.
  *
  * `text` e `image_url` são mutuamente complementares: o endpoint aceita
@@ -260,6 +286,24 @@ export const telegramApi = {
   // ---- Mensagens ----
   async sendMessage(input: SendMessageInput): Promise<SendMessageResponse> {
     return request<SendMessageResponse>('/send-message', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+
+  // ---- Token de integração ----
+  /**
+   * Gera um token do PocketBase pro usuário logado, pra usar como
+   * `Authorization: <token>` em OUTRO sistema (n8n, Make, backend próprio)
+   * ao chamar o `/api/send-message`.
+   *
+   * O token é exibido uma única vez e não é persistido em lugar nenhum —
+   * nem no PB, nem no navegador. Se a página recarregar, ele se perde.
+   */
+  async createIntegrationToken(
+    input: IntegrationTokenInput = {},
+  ): Promise<IntegrationTokenResponse> {
+    return request<IntegrationTokenResponse>('/integration-token', {
       method: 'POST',
       body: JSON.stringify(input),
     })

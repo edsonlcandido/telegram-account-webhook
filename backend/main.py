@@ -285,6 +285,37 @@ class SendMessageRequest(BaseModel):
     reply_to_message_id: Optional[int] = None
 
 
+class IntegrationTokenRequest(BaseModel):
+    # Validade do token em SEGUNDOS. Ausente/None cai no default abaixo.
+    # NUNCA aceitar `user_id` aqui: o id do usuário vem sempre do JWT já
+    # verificado por `verify_pb_auth` — aceitar no body permitiria um usuário
+    # comum pedir token de outra conta (escalação de privilégio).
+    duration: Optional[int] = None
+
+
+# ============================================================================
+# Token de integração (API key via impersonate do PocketBase)
+# ============================================================================
+
+# O endpoint `impersonate` do PB aceita qualquer duração em segundos
+# (>= 0). Nós clampamos numa faixa defensável: o piso evita token que expira
+# antes do usuário conseguir colar no outro sistema; o teto evita que um token
+# vire credencial quase-permanente.
+INTEGRATION_TOKEN_MIN_DURATION = 300  # 5 minutos
+INTEGRATION_TOKEN_MAX_DURATION = 31_536_000  # 365 dias
+INTEGRATION_TOKEN_DEFAULT_DURATION = 2_592_000  # 30 dias
+
+
+def _clamp_integration_duration(duration: Optional[int]) -> int:
+    """Normaliza a duração pedida pra faixa [MIN, MAX]. None/absente = default."""
+    if duration is None:
+        return INTEGRATION_TOKEN_DEFAULT_DURATION
+    return max(
+        INTEGRATION_TOKEN_MIN_DURATION,
+        min(int(duration), INTEGRATION_TOKEN_MAX_DURATION),
+    )
+
+
 # =============================================================================
 # Persistência de Sessões
 # =============================================================================
@@ -2162,6 +2193,122 @@ async def send_message(
         # FloodWait, ChatWriteForbidden, PeerIdInvalid, etc. caem aqui.
         logger.error(f"Erro ao enviar mensagem via {request.session_id}: {msg}")
         raise HTTPException(status_code=400, detail=msg)
+
+
+def _auth_user(auth_response: dict) -> tuple[str, str]:
+    """
+    Extrai `(id, email)` do dict devolvido por `verify_pb_auth`.
+
+    O PB `/auth-refresh` responde o ENVELOPE `{"token": ..., "record": {...}}`,
+    não o record direto — por isso o `record` é lido primeiro. O fallback pra
+    `id`/`email` no topo cobre o caso de o envelope mudar, em vez de devolver
+    id vazio e gerar um token de ninguém.
+    """
+    record = auth_response.get("record")
+    source = record if isinstance(record, dict) else auth_response
+    return str(source.get("id") or ""), str(source.get("email") or "")
+
+
+# =============================================================================
+# Token de integração (API key estilo impersonate do PocketBase)
+# =============================================================================
+
+@app.post("/api/integration-token")
+async def create_integration_token(
+    request: IntegrationTokenRequest,
+    auth_response: dict = Depends(verify_pb_auth),
+):
+    """
+    Gera um token do PocketBase para o usuário AUTENTICADO usando o endpoint
+    `impersonate` — que, por definição, só o superuser pode chamar. O frontend
+    não tem superuser (só o JWT do próprio user), então o proxy acontece aqui.
+
+    Uso: o usuário gera o token no painel (`/docs`), copia e usa como
+    `Authorization: <token>` em OUTRO sistema (n8n, Make, backend próprio)
+    pra chamar `POST /api/send-message`.
+
+    O token gerado é um JWT de auth record normal, então o `verify_pb_auth`
+    existente valida sem precisar saber da origem dele.
+
+    ⚠ O token é ESTÁTICO: não renova e NÃO tem revogação individual (o PB é
+    stateless, sem sessão e sem logout). Gerar outro não invalida este — o
+    caminho real de revogação é trocar a senha do usuário no Admin UI do PB,
+    o que rotaciona o `tokenKey` dele.
+    """
+    user_id, user_email = _auth_user(auth_response)
+    if not user_id:
+        # Token válido pro PB mas sem record utilizável — não gera nada.
+        raise HTTPException(401, "Token inválido ou expirado")
+
+    duration = _clamp_integration_duration(request.duration)
+    url = f"{POCKETBASE_URL}/api/collections/users/impersonate/{user_id}"
+
+    async def _ask_pb(token: str) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            return await client.post(
+                url,
+                json={"duration": duration},
+                # O PB NÃO aceita o prefixo "Bearer" — só o JWT cru (mesma
+                # regra de `pb_headers`/`pb_service_headers`).
+                headers={"Authorization": token},
+            )
+
+    try:
+        service_token = await _ensure_pb_service_token()
+    except Exception as e:
+        logger.error(f"Falha ao obter o service token do PB: {e}")
+        raise HTTPException(status_code=503, detail="Serviço de autenticação indisponível")
+
+    try:
+        r = await _ask_pb(service_token)
+        if r.status_code == 401:
+            # Caminho "POCKETBASE_SERVICE_TOKEN = JWT fixo" não tem auto-refresh:
+            # se o JWT do env expirou, o PB rejeita. Re-autentica e tenta 1x.
+            logger.warning("Impersonate recusou o service token — forçando refresh")
+            service_token = await force_refresh_pb_service_token()
+            r = await _ask_pb(service_token)
+
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado no PocketBase")
+
+        if r.status_code != 200:
+            # Loga o body do PB (contexto do erro). NUNCA o header/token.
+            logger.error(
+                f"Impersonate falhou no PB: HTTP {r.status_code} — {r.text[:300]}"
+            )
+            raise HTTPException(status_code=502, detail="Falha ao gerar o token no PocketBase")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao gerar token de integração: {e}")
+        raise HTTPException(status_code=502, detail="Falha ao gerar o token no PocketBase")
+
+    try:
+        body = r.json()
+    except Exception:
+        body = {}
+
+    token = body.get("token")
+    if not token:
+        # Loga só as CHAVES — o body dessa rota, quando 200, carrega o token.
+        logger.error(f"Impersonate respondeu sem token. Chaves: {list(body.keys())}")
+        raise HTTPException(status_code=502, detail="Falha ao gerar o token no PocketBase")
+
+    expires_at = _jwt_exp(token) or 0
+
+    # Log de auditoria. NÃO inclui o token.
+    logger.info(
+        f"🔑 Token de integração gerado para {user_email or user_id} "
+        f"(user_id={user_id}, duração={duration}s, expira em={expires_at})"
+    )
+
+    return {
+        "success": True,
+        "token": token,
+        "expires_at": expires_at,
+        "duration": duration,
+        "user": {"id": user_id, "email": user_email},
+    }
 
 
 # =============================================================================
