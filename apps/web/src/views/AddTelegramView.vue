@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import AppNav from '../components/AppNav.vue'
 import { telegramApi } from '../services/telegram'
 
 const router = useRouter()
@@ -128,28 +129,13 @@ const goBack = () => {
 <template>
   <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
-    <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
-      <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16">
-          <div class="flex items-center">
-            <button @click="goBack" class="flex items-center text-gray-600 hover:text-gray-900">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-              </svg>
-              <span class="font-semibold">Voltar</span>
-            </button>
-          </div>
-          <div class="flex items-center">
-            <span class="text-xl font-bold text-brand-600">
-              Adicionar Conta
-            </span>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <AppNav title="Adicionar Conta" :back-to="null" @back="goBack" />
 
     <!-- Main Content -->
-    <main class="max-w-2xl mx-auto py-12 px-4">
+    <main class="app-container py-12">
+      <!-- Container do formulário: mantém a largura estreita (672px)
+           dentro do container padrão de 1216px das demais páginas -->
+      <div class="max-w-2xl mx-auto">
       <!-- Progress Steps -->
       <div class="flex items-center justify-center mb-12">
         <div class="flex items-center">
@@ -338,6 +324,7 @@ const goBack = () => {
             Tentar novamente
           </button>
         </div>
+      </div>
       </div>
     </main>
   </div>

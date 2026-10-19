@@ -6,7 +6,6 @@ import { messagesForChat, type TelegramMessage, type ChatGroup } from '../servic
 import { telegramApi } from '../services/telegram'
 import {
   ArrowDownIcon,
-  ArrowLeftIcon,
   ArrowPathIcon,
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
@@ -17,6 +16,7 @@ import {
   MegaphoneIcon,
   QuestionMarkCircleIcon,
 } from '@heroicons/vue/24/outline'
+import AppNav from '../components/AppNav.vue'
 
 const props = defineProps<{ sessionId?: string }>()
 const router = useRouter()
@@ -377,63 +377,40 @@ function chatTypeLabel(type: string): string {
       return 'Desconhecido'
   }
 }
-
-function goBack() {
-  router.push('/dashboard')
-}
 </script>
 
 <template>
   <div class="min-h-screen bg-gray-50 flex flex-col">
     <!-- Header -->
-    <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16 gap-2">
-          <div class="flex items-center gap-3 min-w-0">
-            <button
-              @click="goBack"
-              class="flex items-center text-gray-600 hover:text-gray-900 flex-shrink-0"
-            >
-              <ArrowLeftIcon class="w-5 h-5" />
-              <span class="ml-1 font-semibold hidden sm:inline">Voltar</span>
-            </button>
-            <span class="text-xl font-bold text-brand-600 truncate">
-              Mensagens
-            </span>
-            <span v-if="accountLabel" class="text-sm text-gray-600 truncate hidden md:inline">
-              · {{ accountLabel }}
-            </span>
-          </div>
-          <div class="flex items-center gap-2">
-            <select
-              v-if="telegramStore.sessions.length > 1"
-              v-model="currentSessionId"
-              class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white max-w-[180px]"
-              @change="loadMessages(true)"
-            >
-              <option
-                v-for="s in telegramStore.sessions"
-                :key="s.session_id"
-                :value="s.session_id"
-              >
-                {{ s.name || formatPhone(s.phone) || s.session_id }}
-              </option>
-            </select>
-            <button
-              @click="loadMessages(true)"
-              :disabled="refreshLoading || !currentSessionId"
-              class="inline-flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              title="Atualizar agora"
-            >
-              <ArrowPathIcon
-                class="h-4 w-4"
-                :class="{ 'animate-spin': refreshLoading }"
-              />
-            </button>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <AppNav title="Mensagens" :subtitle="accountLabel">
+      <template #actions>
+        <select
+          v-if="telegramStore.sessions.length > 1"
+          v-model="currentSessionId"
+          class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white max-w-[180px]"
+          @change="loadMessages(true)"
+        >
+          <option
+            v-for="s in telegramStore.sessions"
+            :key="s.session_id"
+            :value="s.session_id"
+          >
+            {{ s.name || formatPhone(s.phone) || s.session_id }}
+          </option>
+        </select>
+        <button
+          @click="loadMessages(true)"
+          :disabled="refreshLoading || !currentSessionId"
+          class="inline-flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          title="Atualizar agora"
+        >
+          <ArrowPathIcon
+            class="h-4 w-4"
+            :class="{ 'animate-spin': refreshLoading }"
+          />
+        </button>
+      </template>
+    </AppNav>
 
     <!-- Empty state: sem conta -->
     <main
@@ -462,7 +439,7 @@ function goBack() {
     <!-- Layout principal: sidebar + painel -->
     <main
       v-else
-      class="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-4"
+      class="app-container flex-1 py-2 sm:py-4"
     >
       <div
         class="bg-white rounded-2xl shadow-xl overflow-hidden grid grid-cols-1 md:grid-cols-[320px_1fr] h-[calc(100vh-7rem)] min-h-[500px]"

@@ -28,3 +28,29 @@
   --color-accent-800: #372582;
   --color-accent-900: #2A1D63;
 }
+
+/* ==========================================================
+   Container padrão das páginas
+   Largura útil: 1280px (80rem) - 64px de padding = 1216px
+   (mesmo valor do antigo `max-w-7xl ... lg:px-8` da Dashboard)
+   Usar no <nav> interno E no <main> pra menu e conteúdo
+   ficarem alinhados nas mesmas coordenadas.
+   ========================================================== */
+.app-container {
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 640px) {
+  .app-container {
+    padding-inline: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-container {
+    padding-inline: 2rem;
+  }
+}

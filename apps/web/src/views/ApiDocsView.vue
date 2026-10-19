@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-
-const router = useRouter()
+import AppNav from '../components/AppNav.vue'
 
 // Blocos de payload prontos pra copiar.
 // IMPORTANTE: payloads aqui têm que refletir EXATAMENTE o que o FastAPI
@@ -163,43 +161,14 @@ async function copy(key: string, text: string) {
     }
   }
 }
-
-function goBack() {
-  router.push('/dashboard')
-}
 </script>
 
 <template>
   <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
-    <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16">
-          <div class="flex items-center">
-            <button @click="goBack" class="flex items-center text-gray-600 hover:text-gray-900">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
-              <span class="font-semibold">Voltar</span>
-            </button>
-          </div>
-          <div class="flex items-center">
-            <span
-              class="text-xl font-bold text-brand-600"
-            >
-              Documentação da API
-            </span>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <AppNav title="Documentação da API" />
 
-    <main class="max-w-4xl mx-auto py-8 px-4 space-y-6">
+    <main class="app-container py-8 space-y-6">
       <!-- Intro -->
       <div class="bg-white rounded-2xl shadow-xl p-8">
         <h1 class="text-3xl font-bold text-gray-900 mb-3">Como funciona o webhook</h1>

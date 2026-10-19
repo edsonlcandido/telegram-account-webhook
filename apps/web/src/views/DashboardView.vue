@@ -1,48 +1,12 @@
 <template>
   <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
-    <nav class="bg-white/80 backdrop-blur-lg shadow-lg sticky top-0 z-50 border-b border-gray-200">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16 gap-2">
-          <div class="flex items-center min-w-0">
-            <h1 class="text-xl sm:text-2xl font-bold text-brand-600 truncate">
-              Dashboard
-            </h1>
-          </div>
-          <div class="flex items-center gap-2 sm:gap-3">
-            <router-link
-              to="/docs"
-              class="inline-flex items-center px-2 py-2 sm:px-3 text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors"
-              title="Documentação da API"
-            >
-              <svg class="h-5 w-5 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span class="hidden sm:inline">Docs</span>
-            </router-link>
-            <div class="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-1.5 sm:py-2 bg-brand-50 rounded-full">
-              <div class="w-7 h-7 sm:w-8 sm:h-8 bg-brand-600 rounded-full flex items-center justify-center flex-shrink-0">
-                <UserCircleIcon class="h-4 w-4 sm:h-5 sm:w-5 text-white" />
-              </div>
-              <span class="hidden sm:inline text-sm font-semibold text-gray-700 truncate max-w-[8rem]">{{ userName }}</span>
-            </div>
-            <button
-              @click="handleLogout"
-              class="group inline-flex items-center px-2 py-2 sm:px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-red-500 hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all transform hover:scale-105 shadow-lg"
-              title="Sair"
-            >
-              <ArrowRightOnRectangleIcon class="h-5 w-5 sm:mr-2 group-hover:translate-x-1 transition-transform" />
-              <span class="hidden sm:inline">Sair</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <AppNav title="Dashboard" :back-to="null" />
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto py-8 sm:px-6 lg:px-8">
+    <main class="app-container py-8">
       <!-- Welcome Section -->
-      <div class="px-4 py-6 sm:px-0">
+      <div class="px-0 py-6">
         <div class="bg-brand-500 overflow-hidden shadow-2xl rounded-2xl transform hover:scale-[1.02] transition-all">
           <div class="p-5 sm:p-8 text-white">
             <div class="flex items-center justify-between gap-4">
@@ -527,10 +491,9 @@ import { useAuthStore } from '../stores/auth'
 import { useTelegramStore } from '../stores/telegram'
 import { telegramApi, type TelegramSession } from '../services/telegram'
 import {
-  UserCircleIcon,
-  ArrowRightOnRectangleIcon,
   PlusIcon,
 } from '@heroicons/vue/24/outline'
+import AppNav from '../components/AppNav.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -625,12 +588,6 @@ async function saveRename() {
   }
 }
 
-// Logout
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
-
 // Send message modal
 const sendModal = reactive({
   show: false,
@@ -649,17 +606,6 @@ const canSend = computed(() => {
   const hasImage = sendModal.imageUrl.trim() !== ''
   return sendModal.chatId.trim() !== '' && (hasText || hasImage)
 })
-
-function openSendModal(session: TelegramSession) {
-  sendModal.session = session
-  sendModal.chatId = ''
-  sendModal.text = ''
-  sendModal.parseMode = 'plain'
-  sendModal.imageUrl = ''
-  sendModal.replyTo = null
-  sendModal.result = null
-  sendModal.show = true
-}
 
 function closeSendModal() {
   if (sendModal.loading) return
