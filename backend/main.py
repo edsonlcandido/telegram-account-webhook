@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Dict, Optional, Literal
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, AnyHttpUrl
 from telethon import TelegramClient
@@ -325,11 +325,14 @@ def get_session_file(session_id: str) -> Path:
     return SESSIONS_DIR / f"{session_id}.session"
 
 
-def save_session(session_id: str, session_string: str, phone: str):
+def save_session(session_id: str, session_string: str, phone: str, owner_id: str | None = None):
     """Salva apenas a credencial no sistema de arquivos.
 
     Metadados editáveis (name, webhooks) ficam no PocketBase como source
     of truth — o arquivo é só pra carregar a sessão Telethon de volta no boot.
+
+    `owner_id` é apenas um fallback de diagnóstico/fallback de posse: quem
+    manda no dono da sessão é o record `telegram_sessions.owner` no PB.
     """
     session_file = get_session_file(session_id)
     data = {
@@ -337,6 +340,8 @@ def save_session(session_id: str, session_string: str, phone: str):
         "phone": phone,
         "created_at": datetime.now().isoformat(),
     }
+    if owner_id:
+        data["owner_id"] = owner_id
     session_file.write_text(json.dumps(data))
     logger.info(f"💾 Sessão salva: {session_id}")
 
@@ -1035,6 +1040,15 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Falha ao obter PB service token: {e}")
         raise
 
+    # Valida que o service token é de SUPERUSER. Com as rules de escrita
+    # trancadas (createRule/updateRule/deleteRule = null), um token sem
+    # privilégio de superuser faz TODAS as escritas falharem.
+    await _check_service_token_is_superuser()
+
+    # Log de reconciliação: sessões sem dono (invisíveis pra todo mundo
+    # até o admin reatribuir o `owner` no Admin UI do PB).
+    await _log_unowned_sessions()
+
     # Inicializa sessões Telethon
     await initialize_sessions()
 
@@ -1131,32 +1145,303 @@ async def verify_pb_auth(authorization: str | None = Header(default=None)) -> di
     return user
 
 
-async def get_user_token(authorization: str | None = Header(default=None)) -> str:
+# NOTA: não existe mais `get_user_token`/`pb_headers` (extrair o JWT cru do
+# header pra repassar ao PB). Com o isolamento por dono:
+#   - ESCRITAS no PB são sempre com o service token (superuser) — as rules
+#     de escrita estão trancadas (create/update/delete = null) e o FastAPI
+#     valida o dono antes de escrever;
+#   - LEITURAS com o token do usuário não são mais proxyadas pelo backend
+#     (o front lê direto do PB, já escopado pelas rules de dono).
+# Repassar o token do caller pro PB seria um bypass do isolamento.
+
+
+# =============================================================================
+# Isolamento por usuário (dono da sessão)
+# =============================================================================
+# O PB é a autoridade de "quem é o dono" da sessão: o campo
+# `telegram_sessions.owner` (relation → `users`), criado pela migration
+# `1792491708_link_sessions_to_users.js`.
+#
+# DUAS camadas de proteção:
+#
+#   1) Rules do PB — protegem o acesso DIRETO do browser às coleções
+#      (`telegram_sessions` e `telegram_messages` são lidas no front com o
+#      JWT do usuário). Sem elas, o front leria a sessão e o histórico de
+#      mensagens de outros usuários.
+#
+#   2) Checagem explícita AQUI — protege os endpoints da API, que usam o
+#      service token (superuser) em algumas operações. Superuser ignora as
+#      rules do PB, então sem esta checagem o isolamento seria furado.
+#
+# Transição de deploy: o backend entra em produção ANTES da migration (que é
+# o que cria o campo `owner`). Enquanto o campo não existir no PB, o
+# isolamento não está ativo — os helpers detectam isso (campo ausente no
+# record) e mantêm o comportamento permissivo, sem derrubar o app.
+# =============================================================================
+
+_ownership_warned = False
+
+
+def _warn_ownership_inactive() -> None:
+    """Avisa UMA VEZ que o isolamento por dono ainda não está no ar."""
+    global _ownership_warned
+    if not _ownership_warned:
+        logger.warning(
+            "⚠️ PB ainda sem o campo `owner` em telegram_sessions — "
+            "isolamento por usuário INATIVO (aplicou a migration "
+            "1792491708_link_sessions_to_users.js?)"
+        )
+        _ownership_warned = True
+
+
+async def _get_session_record(pb_id: str) -> dict | None:
+    """Record de `telegram_sessions` via service token (superuser).
+
+    Usa o service token de propósito: as rules do PB não valem pra
+    superuser, e aqui a gente PRECISA enxergar a sessão de qualquer dono
+    pra poder comparar o `owner` com o caller.
     """
-    Extrai o JWT cru do header Authorization pra repassar nas chamadas
-    internas ao PocketBase.
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
+                headers=pb_service_headers(),
+            )
+        if r.status_code == 200:
+            return r.json()
+        return None
+    except Exception as e:
+        logger.error(f"Erro ao buscar sessão {pb_id} no PB: {e}")
+        return None
 
-    Por que separado de `verify_pb_auth`: aquele VALIDA o token (chama
-    /auth-refresh no PB, cacheia 5min); este só EXTRAI o string do header
-    sem chamar nada. Os endpoints que fazem proxy ao PB precisam dos dois
-    — o validate garante que o user está logado, o extract dá o string
-    pra mandar de volta pro PB.
 
-    O PB NÃO aceita o prefixo "Bearer" no header — só lê
-    `Authorization: <token>` cru. Se receber "Bearer xxx" o parse
-    interno não reconhece o token.
+async def _resolve_session_record(session_id: str) -> dict | None:
+    """Record de `telegram_sessions` pelo `session_id` (string) — service token."""
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={
+                    "filter": f'session_id="{session_id}"',
+                    "perPage": 1,
+                    "fields": "id,session_id,name,phone,owner",
+                },
+                headers=pb_service_headers(),
+            )
+        items = r.json().get("items", [])
+        return items[0] if items else None
+    except Exception as e:
+        logger.error(f"Erro resolvendo PB session: {e}")
+        raise HTTPException(503, "PocketBase indisponível")
+
+
+async def _assert_record_owned(record: dict, caller_id: str) -> None:
+    """404 se o record não for do caller.
+
+    404 (e não 403) de propósito: não revela que a sessão de outra pessoa
+    existe. Sessão SEM DONO (`owner` vazio) também é negada — ela só volta
+    a funcionar quando o admin reatribui o dono no Admin UI do PB.
     """
-    if not authorization:
-        raise HTTPException(401, "Não autenticado")
-    parts = authorization.strip().split(" ", 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip()
-    return parts[0].strip()
+    if "owner" not in record:
+        # Schema antigo (transição de deploy) → sem isolamento ainda.
+        _warn_ownership_inactive()
+        return
+    if str(record.get("owner") or "") != caller_id:
+        raise HTTPException(404, "Sessão não encontrada ou sem permissão")
 
 
-def pb_headers(user_token: str) -> dict:
-    """Monta o header que o PB aceita: `Authorization: <token>` (sem Bearer)."""
-    return {"Authorization": user_token}
+async def _resolve_owned_session(session_id: str, caller_id: str) -> dict:
+    """Record da sessão do caller. 404 se não existir ou for de outro usuário."""
+    record = await _resolve_session_record(session_id)
+    if not record:
+        raise HTTPException(404, "Sessão não encontrada ou sem permissão")
+    await _assert_record_owned(record, caller_id)
+    return record
+
+
+async def _assert_session_owned_by_pb_id(pb_id: str, caller_id: str) -> None:
+    """Valida o dono de uma sessão pelo `id` do PB (usado pelos webhooks)."""
+    record = await _get_session_record(pb_id)
+    if not record:
+        raise HTTPException(404, "Sessão não encontrada ou sem permissão")
+    await _assert_record_owned(record, caller_id)
+
+
+async def _assert_webhook_owned(webhook_id: str, caller_id: str) -> dict:
+    """Busca o webhook e valida o dono (via a sessão dele). 404 se não for do caller."""
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
+                headers=pb_service_headers(),
+            )
+        if r.status_code != 200:
+            raise HTTPException(404, "Webhook não encontrado")
+        webhook = r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao buscar webhook {webhook_id}: {e}")
+        raise HTTPException(404, "Webhook não encontrado")
+
+    session_pb_id = webhook.get("session", "")
+    if session_pb_id:
+        await _assert_session_owned_by_pb_id(session_pb_id, caller_id)
+    return webhook
+
+
+async def _list_owned_sessions(caller_id: str) -> tuple[Dict[str, dict], bool]:
+    """Mapa `session_id` → record das sessões do caller.
+
+    Retorna `(mapa, ownership_ativo)`. Com `ownership_ativo=False` o mapa
+    traz TODAS as sessões (comportamento antigo) — transição de deploy ou
+    PB fora do ar.
+    """
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={"perPage": 500, "fields": "id,session_id,name,phone,owner"},
+                headers=pb_service_headers(),
+            )
+        items = r.json().get("items", [])
+    except Exception as e:
+        logger.warning(f"Falha ao buscar sessões no PB: {e}")
+        return ({}, False)
+
+    if not items:
+        return ({}, True)
+
+    if "owner" not in items[0]:
+        # Schema antigo → sem isolamento ainda (comportamento antigo).
+        _warn_ownership_inactive()
+        return ({s.get("session_id", ""): s for s in items}, False)
+
+    owned: Dict[str, dict] = {}
+    for s in items:
+        if str(s.get("owner") or "") == caller_id:
+            owned[s.get("session_id", "")] = s
+    return (owned, True)
+
+
+async def _check_session_conflict(session_id: str, caller_id: str) -> bool:
+    """True se a sessão já pertence a OUTRO usuário (conflito de número).
+
+    Sessão sem dono (`owner` vazio) NÃO é conflito — ela é "adotada" pelo
+    primeiro usuário que parear o número (legado em migração manual).
+    """
+    record = await _resolve_session_record(session_id)
+    if not record:
+        return False
+    if "owner" not in record:
+        _warn_ownership_inactive()
+        return False
+    owner = str(record.get("owner") or "")
+    return bool(owner) and owner != caller_id
+
+
+async def _discard_pending_client(session_id: str, hash_key: str, client) -> None:
+    """Desconecta e limpa o client de um pairing que deu conflito de dono.
+
+    Sem isso, o client fica em `active_clients` (e o Telegram conta
+    pareada) mesmo depois do 409 — vazamento de client órfão.
+    """
+    active_clients.pop(session_id, None)
+    active_clients.pop(hash_key, None)
+    try:
+        await client.disconnect()
+    except Exception as e:
+        logger.warning(f"Falha ao desconectar client pendente {session_id}: {e}")
+
+
+async def _resolve_session_id_by_pb_id(pb_id: str) -> str | None:
+    """Resolve o `id` do PB pro `session_id` (string) via service token."""
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
+                params={"fields": "session_id"},
+                headers=pb_service_headers(),
+            )
+        if r.status_code == 200:
+            return r.json().get("session_id")
+    except Exception as e:
+        logger.error(f"Erro resolvendo session_id: {e}")
+    return None
+
+
+async def _check_service_token_is_superuser() -> None:
+    """Log-only: avisa se o service token NÃO for superuser.
+
+    Com as rules de escrita trancadas (create/update/delete = null), um
+    service token sem privilégio de superuser faz TODAS as escritas
+    falharem (pairing de conta e audit log de mensagens).
+    """
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/_superusers/records",
+                params={"perPage": 1},
+                headers=pb_service_headers(),
+            )
+        if r.status_code == 200:
+            logger.info("✅ service token do PB é superuser (escritas liberadas)")
+        else:
+            logger.error(
+                "❌ service token do PB NÃO é superuser (HTTP %s) — as escritas "
+                "vão falhar (createRule/updateRule/deleteRule = null). Defina "
+                "POCKETBASE_SERVICE_TOKEN de um superuser ou use "
+                "POCKETBASE_ADMIN_EMAIL + PASSWORD.",
+                r.status_code,
+            )
+    except Exception as e:
+        logger.warning(f"Não foi possível validar se o service token é superuser: {e}")
+
+
+async def _log_unowned_sessions() -> None:
+    """Log de reconciliação: sessões sem dono (reatribuição manual no Admin UI).
+
+    Sessão sem dono fica INVISÍVEL pra todo mundo (as rules negam) até o
+    admin preencher o campo `owner` no Admin UI do PB. O forwarding dos
+    webhooks não depende de dono — a conta continua ativa.
+    """
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
+                params={"perPage": 500, "fields": "id,session_id,name,owner"},
+                headers=pb_service_headers(),
+            )
+        items = r.json().get("items", [])
+    except Exception as e:
+        logger.warning(f"Falha ao buscar sessões para reconciliação: {e}")
+        return
+
+    if not items:
+        return
+    if "owner" not in items[0]:
+        _warn_ownership_inactive()
+        return
+
+    unowned = [
+        s.get("session_id", "")
+        for s in items
+        if not str(s.get("owner") or "")
+    ]
+    if unowned:
+        logger.warning(
+            "🧭 %d sessão(ões) SEM DONO (invisíveis pra todo mundo — "
+            "reatribua o campo `owner` no Admin UI do PB): %s",
+            len(unowned),
+            ", ".join(unowned),
+        )
 
 
 # =============================================================================
@@ -1225,13 +1510,15 @@ async def send_code(request: SendCodeRequest, _user: dict = Depends(verify_pb_au
 # -----------------------------------------------------------------------------
 @app.post("/api/verify-code")
 async def verify_code(
-    http_request: Request,
     body: VerifyCodeRequest,
-    background_tasks: BackgroundTasks,
     _user: dict = Depends(verify_pb_auth),
 ):
     """
     Verifica o código, cria sessão persistente e inicia escuta.
+
+    A posse da sessão é validada ANTES de gravar qualquer coisa: se o
+    número já estiver vinculado a outro usuário, a resposta é 409 e nada
+    é criado (nem arquivo, nem client ativo, nem record no PB).
     """
     session_id = f"pending_{body.phone_number}"
     hash_key = f"{session_id}_hash"
@@ -1264,11 +1551,45 @@ async def verify_code(
         # Salva sessão
         session_string = client.session.save()
         final_session_id = f"account_{body.phone_number.replace('+', '')}"
+        caller_id, _ = _auth_user(_user)
 
-        # Persiste em arquivo (só credencial — name vai pro PB)
-        save_session(final_session_id, session_string, body.phone_number)
+        # (1) PRE-CHECK de posse. Feito ANTES de gravar o arquivo: se o
+        #     número é de outro usuário, não sobrescreve a credencial
+        #     alheia nem deixa client ativo. "Primeiro dono vence".
+        if await _check_session_conflict(final_session_id, caller_id):
+            await _discard_pending_client(session_id, hash_key, client)
+            raise HTTPException(
+                status_code=409,
+                detail="Esta conta Telegram já está vinculada a outro usuário.",
+            )
 
-        # Move cliente para sessão final
+        # (2) Persiste em arquivo (credencial — name/dono vão pro PB)
+        save_session(
+            final_session_id,
+            session_string,
+            body.phone_number,
+            owner_id=caller_id,
+        )
+
+        # (3) Registra no PocketBase de forma SÍNCRONA. Antes era
+        #     background task: a falha nunca chegava ao usuário e a sessão
+        #     ficava órfã (sem record no PB = invisível na listagem).
+        #     Agora o conflito de dono volta como 409.
+        try:
+            await register_account_pb(
+                final_session_id,
+                body.phone_number,
+                caller_id,
+                body.name,
+            )
+        except HTTPException:
+            # Conflito de dono (ou falha do PB): desfaz tudo pra não
+            # deixar sessão órfã no disco.
+            delete_session_file(final_session_id)
+            await _discard_pending_client(session_id, hash_key, client)
+            raise
+
+        # (4) Move cliente para sessão final
         active_clients[final_session_id] = client
         del active_clients[session_id]
         del active_clients[hash_key]
@@ -1278,31 +1599,14 @@ async def verify_code(
         # disco no boot via initialize_sessions → start_client).
         register_message_handler(client, final_session_id)
 
-        # Extrai o token cru do header Authorization (PB só aceita sem prefixo
-        # "Bearer"). Background tasks do FastAPI NÃO herdam o header da
-        # request original — sem repassar, o PB rejeita com 401 porque a rule
-        # `createRule: "@request.auth.id != ''"` falha em request anônimo.
-        raw_auth = http_request.headers.get("authorization", "").strip()
-        if raw_auth.lower().startswith("bearer "):
-            user_token = raw_auth[7:].strip()
-        else:
-            user_token = raw_auth
-
-        # Registra no PocketBase em background (inclui o alias se o user forneceu)
-        background_tasks.add_task(
-            register_account_pb,
-            final_session_id,
-            body.phone_number,
-            user_token,
-            body.name,
-        )
-
         return {
             "success": True,
             "session_id": final_session_id,
             "message": "Conta pareada com sucesso!"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1310,36 +1614,12 @@ async def verify_code(
 # -----------------------------------------------------------------------------
 # 3. Webhooks (multi-webhook por sessão, com filtros)
 # -----------------------------------------------------------------------------
-
-async def _resolve_pb_session_id(session_id: str, user_token: str | None = None) -> str | None:
-    """Resolve o `session_id` (string única) pro `id` do PB (record id)."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-                params={"filter": f'session_id="{session_id}"', "perPage": 1},
-                headers=pb_headers(user_token) if user_token else None,
-            )
-        items = r.json().get("items", [])
-        return items[0]["id"] if items else None
-    except Exception as e:
-        logger.error(f"Erro resolvendo PB session: {e}")
-        return None
-
-
-async def _resolve_session_id_from_pb(pb_id: str, user_token: str | None = None) -> str | None:
-    """Resolve o `id` do PB pra `session_id` (string)."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
-                headers=pb_headers(user_token) if user_token else None,
-            )
-        if r.status_code == 200:
-            return r.json().get("session_id")
-    except Exception as e:
-        logger.error(f"Erro resolvendo session_id: {e}")
-    return None
+#
+# NOTA: não existe mais "resolver sessão pelo token do usuário" aqui. Com o
+# isolamento por dono, a resolução de sessão SEMPRE passa por
+# `_resolve_owned_session()` (service token + comparação do `owner`), porque
+# as rules de escrita da collection estão trancadas e o FastAPI é o único
+# escritor. Resolver pelo token do usuário traria de volta o bypass.
 
 
 # 3a. Listar webhooks de uma sessão
@@ -1347,12 +1627,15 @@ async def _resolve_session_id_from_pb(pb_id: str, user_token: str | None = None)
 async def list_session_webhooks(
     session_id: str,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
-    pb_id = await _resolve_pb_session_id(session_id, user_token)
+    """Webhooks de uma sessão. Só o DONO da sessão enxerga os dele."""
+    caller_id, _ = _auth_user(_user)
+    session = await _resolve_owned_session(session_id, caller_id)
+    pb_id = session.get("id", "")
     if not pb_id:
         return {"webhooks": []}
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
@@ -1361,7 +1644,7 @@ async def list_session_webhooks(
                 # sessão, a ordem de criação não é tão importante — o `id`
                 # (gerado pelo PB em ordem cronológica) é suficiente.
                 params={"filter": f'session="{pb_id}"', "perPage": 500},
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         items = r.json().get("items", [])
         for w in items:
@@ -1377,19 +1660,29 @@ async def create_webhook(
     session_id: str,
     request: CreateWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
-    pb_id = await _resolve_pb_session_id(session_id, user_token)
+    """Cria um webhook na sessão. Só o DONO da sessão pode criar.
+
+    A escrita usa o service token (superuser) porque as rules de escrita
+    da collection estão trancadas (createRule = null): o FastAPI é o único
+    escritor e valida o dono da sessão ANTES de escrever. Isso fecha o
+    vetor de "anexar webhook na sessão de outro" via chamada direta na
+    API do PocketBase.
+    """
+    caller_id, _ = _auth_user(_user)
+    session = await _resolve_owned_session(session_id, caller_id)
+    pb_id = session.get("id", "")
     if not pb_id:
         raise HTTPException(404, "Sessão não encontrada no PB")
 
     # Default name = "Webhook 1", "Webhook 2"... baseado em quantos já existem
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
             cnt_r = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 params={"filter": f'session="{pb_id}"', "perPage": 500, "fields": "id"},
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         existing_count = len(cnt_r.json().get("items", []))
     except Exception:
@@ -1407,15 +1700,15 @@ async def create_webhook(
         "filter_text_match_value": request.filter_text_match_value or "",
     }
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 json=payload,
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
-        pass  # invalidate removed (hook do PB faz cache via SQL)
         result = r.json()
         result["session_id"] = session_id
         return result
@@ -1431,25 +1724,29 @@ async def update_webhook(
     webhook_id: str,
     request: UpdateWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
+    """Atualiza um webhook. Só o DONO da sessão do webhook pode mexer nele."""
     payload = {k: v for k, v in request.model_dump().items() if v is not None}
     if not payload:
         raise HTTPException(400, "Nada pra atualizar")
 
+    caller_id, _ = _auth_user(_user)
+    webhook = await _assert_webhook_owned(webhook_id, caller_id)
+
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.patch(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
                 json=payload,
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
         result = r.json()
-        sid = await _resolve_session_id_from_pb(result.get("session", ""), user_token)
+        sid = await _resolve_session_id_by_pb_id(result.get("session", ""))
         if sid:
-            pass  # invalidate removed (hook do PB faz cache via SQL)
+            result["session_id"] = sid
         return result
     except HTTPException:
         raise
@@ -1462,27 +1759,20 @@ async def update_webhook(
 async def delete_webhook(
     webhook_id: str,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r_get = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
-                headers=pb_headers(user_token),
-            )
-            if r_get.status_code != 200:
-                raise HTTPException(404, "Webhook não encontrado")
-            wh = r_get.json()
-            sid = await _resolve_session_id_from_pb(wh.get("session", ""), user_token)
+    """Remove um webhook. Só o DONO da sessão do webhook pode remover."""
+    caller_id, _ = _auth_user(_user)
+    webhook = await _assert_webhook_owned(webhook_id, caller_id)
 
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.delete(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
-        if sid:
-            pass  # invalidate removed (hook do PB faz cache via SQL)
         return {"success": True}
     except HTTPException:
         raise
@@ -1496,28 +1786,26 @@ async def toggle_webhook(
     webhook_id: str,
     request: ToggleWebhookRequest,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r_get = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
-                headers=pb_headers(user_token),
-            )
-            if r_get.status_code != 200:
-                raise HTTPException(404, "Webhook não encontrado")
-            sid = await _resolve_session_id_from_pb(r_get.json().get("session", ""), user_token)
+    """Pausa/retoma um webhook. Só o DONO da sessão do webhook pode mexer."""
+    caller_id, _ = _auth_user(_user)
+    webhook = await _assert_webhook_owned(webhook_id, caller_id)
 
+    try:
+        await _ensure_pb_service_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.patch(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
                 json={"enabled": request.enabled},
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
+        result = r.json()
+        sid = await _resolve_session_id_by_pb_id(result.get("session", ""))
         if sid:
-            pass  # invalidate removed (hook do PB faz cache via SQL)
-        return r.json()
+            result["session_id"] = sid
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -1529,20 +1817,17 @@ async def toggle_webhook(
 async def test_webhook_endpoint(
     webhook_id: str,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r_get = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records/{webhook_id}",
-                headers=pb_headers(user_token),
-            )
-            if r_get.status_code != 200:
-                raise HTTPException(404, "Webhook não encontrado")
-            url = r_get.json().get("url")
-            if not url:
-                raise HTTPException(400, "Webhook sem URL")
+    """Dispara um POST de teste na URL do webhook. Só o DONO pode testar."""
+    caller_id, _ = _auth_user(_user)
+    webhook = await _assert_webhook_owned(webhook_id, caller_id)
 
+    try:
+        url = webhook.get("url")
+        if not url:
+            raise HTTPException(400, "Webhook sem URL")
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 url,
                 json={
@@ -1551,10 +1836,10 @@ async def test_webhook_endpoint(
                     "timestamp": datetime.now().isoformat(),
                 },
             )
-            return {
-                "success": response.status_code == 200,
-                "status_code": response.status_code,
-            }
+        return {
+            "success": response.status_code == 200,
+            "status_code": response.status_code,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1567,19 +1852,22 @@ async def update_session(
     session_id: str,
     request: UpdateSessionRequest,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
+    """Renomeia a sessão. Só o DONO da sessão pode renomear."""
     if request.name is None:
         raise HTTPException(400, "Nada pra atualizar")
-    pb_id = await _resolve_pb_session_id(session_id, user_token)
+    caller_id, _ = _auth_user(_user)
+    session = await _resolve_owned_session(session_id, caller_id)
+    pb_id = session.get("id", "")
     if not pb_id:
         raise HTTPException(404, "Sessão não encontrada no PB")
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.patch(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
                 json={"name": request.name},
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         if r.status_code >= 300:
             raise HTTPException(400, f"PB recusou: {r.text}")
@@ -1603,10 +1891,31 @@ async def refresh_webhook_cache(_user: dict = Depends(verify_pb_auth)):
 @app.get("/api/sessions")
 async def list_sessions(
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
-    """Lista todas as sessões (arquivo é source of truth pra credencial; PB pra metadados)."""
+    """Lista as sessões do USUÁRIO.
+
+    A lista é a INTERSEÇÃO de duas fontes:
+      - arquivos em disco (`load_sessions()`) → a credencial
+      - records `telegram_sessions` do PB cujo `owner` é o caller → o dono
+
+    O PB é a autoridade de posse: sessão sem record (ou sem dono) não
+    aparece na lista. Ela volta a aparecer quando o admin reatribui o
+    `owner` no Admin UI do PB — sem reiniciar nada.
+    """
+    caller_id, _ = _auth_user(_user)
     saved = load_sessions()
+
+    owned, ownership_active = await _list_owned_sessions(caller_id)
+
+    if ownership_active:
+        visible = [s for s in saved if s.get("session_id") in owned]
+    else:
+        # Transição de deploy (PB sem o campo `owner`) ou PB fora do ar:
+        # mantém o comportamento antigo em vez de mostrar lista vazia.
+        logger.warning(
+            "list_sessions: isolamento por dono INATIVO — listando todas as sessões"
+        )
+        visible = saved
 
     # Cruza com PB pra buscar name + webhook_count em batch.
     # PB não tem JOIN — faço 2 queries globais e cruz em memória (N é pequeno).
@@ -1614,27 +1923,22 @@ async def list_sessions(
     pb_id_by_sid: Dict[str, str] = {}
     counts_by_pb_id: Dict[str, int] = {}
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
-            sess_resp = await client.get(
-                f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-                params={"perPage": 500, "fields": "id,session_id,name"},
-                headers=pb_headers(user_token),
-            )
-            for s in sess_resp.json().get("items", []):
-                sid = s.get("session_id", "")
-                name_by_sid[sid] = s.get("name", "") or ""
-                pb_id_by_sid[sid] = s.get("id", "")
-
             wh_resp = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
                 params={"perPage": 500, "fields": "session"},
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
             for w in wh_resp.json().get("items", []):
                 sid = w.get("session", "")
                 counts_by_pb_id[sid] = counts_by_pb_id.get(sid, 0) + 1
     except Exception as e:
         logger.warning(f"Falha ao buscar metadados PB pra list_sessions: {e}")
+
+    for sid, rec in owned.items():
+        name_by_sid[sid] = rec.get("name", "") or ""
+        pb_id_by_sid[sid] = rec.get("id", "")
 
     return {
         "sessions": [
@@ -1648,7 +1952,7 @@ async def list_sessions(
                     pb_id_by_sid.get(s["session_id"], ""), 0
                 ),
             }
-            for s in saved
+            for s in visible
         ]
     }
 
@@ -1660,10 +1964,13 @@ async def list_sessions(
 async def delete_session(
     session_id: str,
     _user: dict = Depends(verify_pb_auth),
-    user_token: str = Depends(get_user_token),
 ):
     """Remove uma sessão inteira: cliente ativo, arquivo em disco e
     record no PocketBase.
+
+    A checagem de posse vem ANTES de qualquer efeito: quem não é dono
+    recebe 404 e NADA é tocado (nem o arquivo, nem o client Telethon do
+    outro).
 
     O DELETE no PB é o que importa pra integridade: as relations
     `telegram_webhooks.session` e `telegram_messages.session` são
@@ -1675,6 +1982,22 @@ async def delete_session(
     — então a conta sumia da UI, mas o record, os webhooks e as
     mensagens ficavam no banco para sempre.
     """
+    caller_id, _ = _auth_user(_user)
+
+    # (1) Resolve + valida o dono. 404 = não existe OU é de outro usuário.
+    session = await _resolve_session_record(session_id)
+    if session:
+        await _assert_record_owned(session, caller_id)
+        pb_id = session.get("id", "")
+    else:
+        # Órfão: sem record no PB. O fallback de posse é o `owner_id`
+        # gravado no arquivo (quando a sessão foi criada com dono).
+        pb_id = ""
+        file_owner = _session_file_owner(session_id)
+        if not file_owner or file_owner != caller_id:
+            raise HTTPException(404, "Sessão não encontrada ou sem permissão")
+
+    # (2) Só agora mexe em tudo.
     # Desconecta cliente ativo
     if session_id in active_clients:
         await active_clients[session_id].disconnect()
@@ -1684,7 +2007,7 @@ async def delete_session(
     delete_session_file(session_id)
 
     # Remove o record no PB (cascade de webhooks + mensagens)
-    deleted_in_pb = await _delete_session_record_pb(session_id, user_token)
+    deleted_in_pb = await _delete_session_record_pb(pb_id)
     if not deleted_in_pb:
         logger.warning(
             f"⚠️ Sessão {session_id} removida do disco mas o record no PB "
@@ -1694,36 +2017,48 @@ async def delete_session(
     return {"success": True, "deleted_pb_record": deleted_in_pb}
 
 
-async def _delete_session_record_pb(session_id: str, user_token: str) -> bool:
+def _session_file_owner(session_id: str) -> str:
+    """`owner_id` gravado no arquivo da sessão (fallback de posse)."""
+    session_file = get_session_file(session_id)
+    if not session_file.exists():
+        return ""
+    try:
+        data = json.loads(session_file.read_text())
+        return str(data.get("owner_id") or "")
+    except Exception:
+        return ""
+
+
+async def _delete_session_record_pb(pb_id: str) -> bool:
     """Apaga o record de `telegram_sessions` no PB (cascade de webhooks
     + mensagens).
-    
+
     Idempotente: se o record não existir mais (404) retorna False sem
     estourar erro — o objetivo é o banco limpo, não o status HTTP.
     """
-    pb_id = await _resolve_pb_session_id(session_id, user_token)
     if not pb_id:
         return False
     try:
+        await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.delete(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{pb_id}",
-                headers=pb_headers(user_token),
+                headers=pb_service_headers(),
             )
         if r.status_code == 404:
             return False
         if r.status_code >= 300:
             logger.warning(
-                f"PB recusou DELETE da sessão {session_id}: "
+                f"PB recusou DELETE da sessão {pb_id}: "
                 f"{r.status_code} {r.text[:200]}"
             )
             return False
         logger.info(
-            f"🗑️ Sessão removida do PB (cascade webhooks+mensagens): {session_id}"
+            f"🗑️ Sessão removida do PB (cascade webhooks+mensagens): {pb_id}"
         )
         return True
     except Exception as e:
-        logger.warning(f"Falha ao remover sessão {session_id} do PB: {e}")
+        logger.warning(f"Falha ao remover sessão {pb_id} do PB: {e}")
         return False
 
 
@@ -1734,21 +2069,32 @@ async def _delete_session_record_pb(session_id: str, user_token: str) -> bool:
 async def register_account_pb(
     session_id: str,
     phone: str,
-    user_token: str | None = None,
+    caller_id: str,
     name: str | None = None,
-):
+) -> str:
     """Registra/atualiza a conta no PB (collection `telegram_sessions`).
 
     A StringSession NÃO é enviada — ela fica só no arquivo em
-    `/app/sessions/*.json` (credencial). A collection no PB guarda só
-    metadados leves (phone, name) e a relação com `telegram_webhooks`.
-    Credenciais do app Telegram (api_id/api_hash) vivem nos env vars
-    do container e são sempre as mesmas (single-app).
+    `/app/sessions/*.session` (credencial). A collection no PB guarda só
+    metadados leves (phone, name), o DONO da sessão (`owner`) e a relação
+    com `telegram_webhooks`. Credenciais do app Telegram (api_id/api_hash)
+    vivem nos env vars do container e são sempre as mesmas (single-app).
 
-    `user_token` é o JWT cru do usuário (sem prefixo "Bearer" — o PB
-    não aceita). Sem ele, o PB rejeita as chamadas com 401 porque
-    `createRule: "@request.auth.id != ''"` exige auth.
+    Usa o service token (superuser) porque as rules de escrita da
+    collection estão trancadas (createRule/updateRule = null) — o FastAPI
+    é o único escritor e valida o dono antes de escrever.
+
+    Comportamento por estado do record:
+      - não existe          → cria com `owner = caller_id`
+      - dono == caller      → atualiza (name/phone)
+      - SEM dono (legado)   → adota (`owner = caller_id`)
+      - dono de OUTRO       → 409 (não rouba a conta de ninguém)
+
+    Retorna "created" | "updated" | "adopted".
     """
+    await _ensure_pb_service_token()
+    headers = pb_service_headers()
+
     payload: dict = {
         "session_id": session_id,
         "phone": phone,
@@ -1756,43 +2102,78 @@ async def register_account_pb(
     if name:
         payload["name"] = name
 
-    # PB lê o header como "Authorization: <token>" (sem prefixo "Bearer").
-    # Se receber "Bearer xxx" o parse interno não reconhece o token.
-    headers: dict = {}
-    if user_token:
-        headers = pb_headers(user_token)
-
     try:
-        # Se já existe record com esse session_id, atualiza (mantém id e created);
-        # senão, cria. Idempotente.
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Se já existe record com esse session_id, atualiza (mantém id e
+            # created); senão, cria. Idempotente.
             find = await client.get(
                 f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
-                params={"filter": f'session_id="{session_id}"', "perPage": 1},
+                params={
+                    "filter": f'session_id="{session_id}"',
+                    "perPage": 1,
+                    "fields": "id,session_id,owner",
+                },
                 headers=headers,
             )
             existing = find.json().get("items", [])
             if existing:
-                rec_id = existing[0]["id"]
+                rec = existing[0]
+                rec_id = rec["id"]
+                if "owner" in rec:
+                    current_owner = str(rec.get("owner") or "")
+                    if current_owner and current_owner != caller_id:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Esta conta Telegram já está vinculada a outro usuário.",
+                        )
+                    if not current_owner:
+                        # Legado sem dono → adota pro caller atual.
+                        payload["owner"] = caller_id
+                        action = "adopted"
+                    else:
+                        action = "updated"
+                else:
+                    # Schema antigo (sem campo `owner`) → isolamento ainda
+                    # inativo. O PB ignora campo desconhecido no payload.
+                    _warn_ownership_inactive()
+                    action = "updated"
+
                 resp = await client.patch(
                     f"{POCKETBASE_URL}/api/collections/telegram_sessions/records/{rec_id}",
                     json=payload,
                     headers=headers,
                 )
             else:
+                # Cria. `owner` só entra no payload se o campo existir no
+                # schema — o PB ignora campo desconhecido, mas fica explícito.
+                payload["owner"] = caller_id
+                action = "created"
                 resp = await client.post(
                     f"{POCKETBASE_URL}/api/collections/telegram_sessions/records",
                     json=payload,
                     headers=headers,
                 )
-        if 200 <= resp.status_code < 300:
-            logger.info(f"📝 Conta registrada no PocketBase: {phone}")
-        else:
-            logger.error(
-                f"PB recusou registro de {phone}: {resp.status_code} {resp.text}"
-            )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erro ao registrar no PocketBase: {e}")
+        raise HTTPException(status_code=503, detail=f"Falha ao registrar no PocketBase: {e}")
+
+    if 200 <= resp.status_code < 300:
+        logger.info(f"📝 Conta registrada no PocketBase ({action}): {phone}")
+        return action
+
+    # Índice UNIQUE de phone/session_id estourou → o número já pertence a
+    # outra conta. Mesma mensagem do 409 do pre-check (UX consistente).
+    detail = resp.text[:300]
+    if resp.status_code == 400 and ("unique" in detail.lower() or "phone" in detail):
+        logger.warning(f"PB recusou registro de {phone} (unique constraint): {detail}")
+        raise HTTPException(
+            status_code=409,
+            detail="Esta conta Telegram já está vinculada a outro usuário.",
+        )
+    logger.error(f"PB recusou registro de {phone}: {resp.status_code} {detail}")
+    raise HTTPException(status_code=400, detail=f"PB recusou registro: {detail}")
 
 
 # -----------------------------------------------------------------------------
@@ -2081,6 +2462,13 @@ async def send_message(
             status_code=400, detail="Informe text ou image_url"
         )
 
+    # Isolamento por dono: a sessão precisa PERTENCER ao caller. Sem esta
+    # checagem, qualquer autenticado (inclusive o token de integração de
+    # outro cliente) enviaria mensagem pela conta Telegram de outra pessoa —
+    # o `active_clients` é global do processo e não sabe de dono.
+    caller_id, _ = _auth_user(_user)
+    await _resolve_owned_session(request.session_id, caller_id)
+
     if request.session_id not in active_clients:
         raise HTTPException(
             status_code=404, detail="Sessão não encontrada ou offline"
@@ -2249,7 +2637,7 @@ async def create_integration_token(
                 url,
                 json={"duration": duration},
                 # O PB NÃO aceita o prefixo "Bearer" — só o JWT cru (mesma
-                # regra de `pb_headers`/`pb_service_headers`).
+                # regra de `pb_service_headers`).
                 headers={"Authorization": token},
             )
 
@@ -2322,15 +2710,26 @@ async def admin_list_sessions(_user: dict = Depends(verify_pb_auth)):
     `active_sessions=0` no /health. NÃO expõe `session_string` (credencial
     real da conta Telegram). Mostra apenas phone, webhook_url, created_at,
     tamanho do session_string e flag active (se está em active_clients).
+
+    IMPORTANTE: só lista as sessões DO CALLER. Esse endpoint é autenticado
+    (não é admin de verdade) — expor o telefone de todo mundo seria o
+    mesmo vazamento que estamos fechando.
     """
+    caller_id, _ = _auth_user(_user)
+    owned, ownership_active = await _list_owned_sessions(caller_id)
+
     sessions = []
     for session_file in sorted(SESSIONS_DIR.glob("*.session")):
         try:
             data = json.loads(session_file.read_text())
             session_id = session_file.stem
+            if ownership_active and session_id not in owned:
+                # Sessão de outro usuário (ou sem dono) → não expõe.
+                continue
             sessions.append({
                 "session_id": session_id,
                 "phone": data.get("phone"),
+                "owner_id": data.get("owner_id"),
                 "webhook_url": data.get("webhook_url"),
                 "webhook_enabled": data.get("webhook_enabled", True),
                 "created_at": data.get("created_at"),
