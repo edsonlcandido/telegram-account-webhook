@@ -80,6 +80,11 @@ export interface ListMessagesResult {
  * `telegramStore.sessions`, mas a relation em `telegram_messages` aponta
  * pro `pb_id`. E o filter do PB **não** suporta `session.session_id =
  * "..."` (erro 400) — só equality direto no relation (`session = "pb_id"`).
+ *
+ * ISOLAMENTO: a `listRule` de `telegram_sessions` é
+ * `"owner = @request.auth.id"` — só o DONO da sessão enxerga o record.
+ * Sessão de outra pessoa devolve 0 items → o erro abaixo ("não encontrada
+ * ou sem permissão") cobre os dois casos, sem revelar que a sessão existe.
  */
 export async function getSessionPbId(sessionId: string): Promise<string> {
   const result = await pb.collection('telegram_sessions').getList<{
@@ -89,7 +94,7 @@ export async function getSessionPbId(sessionId: string): Promise<string> {
     filter: `session_id="${escapeFilterValue(sessionId)}"`,
   })
   if (result.items.length === 0) {
-    throw new Error(`Sessão não encontrada: ${sessionId}`)
+    throw new Error(`Sessão não encontrada ou sem permissão: ${sessionId}`)
   }
   return result.items[0].id
 }
@@ -105,7 +110,9 @@ export async function getSessionPbId(sessionId: string): Promise<string> {
  *
  * Auth: o `pb` (PocketBase SDK) já injeta o user JWT em todo request
  * via `pb.authStore.token`. A `listRule` da collection é
- * `"@request.auth.id != ''"` (permissiva — qualquer user autenticado lê).
+ * `"session.owner = @request.auth.id"` — o dono é derivado da sessão
+ * (relation `session` → `telegram_sessions` → `owner`), então o front
+ * só enxerga as mensagens das SUAS sessões.
  */
 export async function listMessagesByPbId(
   sessionPbId: string,
