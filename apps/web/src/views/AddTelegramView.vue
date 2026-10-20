@@ -17,6 +17,11 @@ const phoneCodeHash = ref('')
 const sessionId = ref('')
 const errorMessage = ref('')
 const countdown = ref(0)
+// 2FA: o backend responde `two_factor_required` quando a conta tem
+// verificação em duas etapas. Aí o front pede a SENHA de 2FA (o código do
+// SMS/app sozinho não basta).
+const requires2fa = ref(false)
+const password2fa = ref('')
 
 // Normaliza telefone pro formato E.164 (+DDI+DDD+número).
 // Aceita entrada com espaços/traços/parênteses pra facilitar digitação,
@@ -48,6 +53,13 @@ const isValidName = computed(() => {
   return name.value.length <= 60
 })
 
+// Com 2FA, a senha é obrigatória pra concluir a verificação.
+const canVerify = computed(() => {
+  if (!isValidCode.value || !isValidName.value) return false
+  if (requires2fa.value && !password2fa.value.trim()) return false
+  return true
+})
+
 const handlePhoneInput = (e: Event) => {
   const input = e.target as HTMLInputElement
   phone.value = sanitizePhone(input.value)
@@ -67,6 +79,9 @@ const sendCode = async () => {
     phoneCodeHash.value = result.phone_code_hash
     sessionId.value = result.session_id
     step.value = 'code'
+    // Código novo => recomeça o estado de 2FA
+    requires2fa.value = false
+    password2fa.value = ''
     
     // Countdown de reenvio (baseado no expire_interval da API)
     countdown.value = result.expires || 60
@@ -95,15 +110,31 @@ const verifyCode = async () => {
     // anterior. Sem ele o backend recebia `name=None` e criava o record
     // no PB com o apelido vazio — o usuario preenchia o campo e ele
     // simplesmente sumia (so aparecia depois de editar a sessao).
-    await telegramApi.verifyCode(fullPhone, code.value, name.value)
+    // O 4º (`password`) é a senha de 2FA, só usada quando o backend
+    // pediu (`two_factor_required`).
+    await telegramApi.verifyCode(
+      fullPhone,
+      code.value,
+      name.value,
+      requires2fa.value ? password2fa.value : undefined,
+    )
     step.value = 'success'
-    
+
     // Redireciona após 2 segundos
     setTimeout(() => {
       router.push('/dashboard')
     }, 2000)
-    
+
   } catch (error: any) {
+    // Conta com 2FA: o backend pediu a senha. Fica no passo de código
+    // (não perde o que o usuario já digitou) e mostra o campo de senha.
+    if (error?.code === 'two_factor_required') {
+      requires2fa.value = true
+      step.value = 'code'
+      errorMessage.value = error.message || 'Esta conta usa verificação em duas etapas (2FA).'
+      return
+    }
+
     step.value = 'error'
     errorMessage.value = error.message || 'Código inválido'
     // Volta pro input de código
@@ -120,6 +151,8 @@ const goBack = () => {
     step.value = 'phone'
     code.value = ''
     countdown.value = 0
+    requires2fa.value = false
+    password2fa.value = ''
   } else {
     router.push('/dashboard')
   }
@@ -263,12 +296,35 @@ const goBack = () => {
             </p>
           </div>
 
+          <!-- 2FA: só aparece quando o backend responde two_factor_required -->
+          <div v-if="requires2fa">
+            <div class="rounded-xl bg-amber-50 border-2 border-amber-200 p-4 mb-4">
+              <p class="text-sm text-amber-800">
+                Esta conta tem <strong>verificação em duas etapas (2FA)</strong>.
+                Informe a <strong>senha de 2FA</strong> (a senha de login do Telegram,
+                não o código do app).
+              </p>
+            </div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Senha de 2FA</label>
+            <input
+              v-model="password2fa"
+              type="password"
+              autocomplete="current-password"
+              placeholder="sua senha de 2FA"
+              class="w-full px-4 py-4 text-lg border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none transition-colors"
+              @keyup.enter="verifyCode"
+            />
+            <p v-if="errorMessage" class="mt-2 text-sm text-red-500">
+              {{ errorMessage }}
+            </p>
+          </div>
+
           <button
             @click="verifyCode"
-            :disabled="!isValidCode"
+            :disabled="!canVerify"
             class="w-full py-4 px-6 bg-green-500 text-white font-bold rounded-xl hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg"
           >
-            Verificar código
+            {{ requires2fa ? 'Confirmar com a senha' : 'Verificar código' }}
           </button>
 
           <div class="text-center">

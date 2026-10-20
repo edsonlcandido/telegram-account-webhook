@@ -175,15 +175,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     let message = `HTTP ${response.status}`
+    let code = ''
     try {
       const err = await response.json()
-      if (err && typeof err.detail === 'string') {
-        message = err.detail
+      const detail = err?.detail
+      if (typeof detail === 'string') {
+        message = detail
+      } else if (detail && typeof detail === 'object') {
+        // Erro estruturado: { detail: { error, message } }
+        // `error` = código estável (ex: "two_factor_required") que o caller
+        // usa pra decidir o próximo passo; `message` = texto pro usuário.
+        if (typeof detail.message === 'string') message = detail.message
+        if (typeof detail.error === 'string') code = detail.error
       }
     } catch {
       // body não era JSON — mantém a mensagem genérica
     }
-    throw new Error(message)
+    const error = new Error(message) as Error & { code?: string }
+    if (code) error.code = code
+    throw error
   }
 
   return (await response.json()) as T
@@ -202,13 +212,21 @@ export const telegramApi = {
     })
   },
 
-  async verifyCode(phone: string, code: string, name?: string): Promise<VerifyCodeResponse> {
+  async verifyCode(
+    phone: string,
+    code: string,
+    name?: string,
+    password?: string,
+  ): Promise<VerifyCodeResponse> {
     return request<VerifyCodeResponse>('/verify-code', {
       method: 'POST',
       body: JSON.stringify({
         phone_number: phone,
         code,
         name: name || undefined,
+        // Só enviado quando a conta tem 2FA (o backend responde
+        // `two_factor_required` na 1ª tentativa).
+        password: password || undefined,
       }),
     })
   },
