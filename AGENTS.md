@@ -108,13 +108,43 @@ POCKETBASE_ADMIN_PASSWORD=...                # Auto-refresh: re-autentica 5min a
 ## Coleções PocketBase
 
 - `users`: Usuários (auth nativo)
-- `telegram_sessions`: phone, session_id, name (alias opcional, editável)
+- `telegram_sessions`: phone, session_id, name (alias opcional, editável), **owner** (relation → `users` = DONO da sessão)
   - Credencial `StringSession` **NÃO** fica aqui — só no `/app/sessions/*.json`.
   - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container (single-app).
+  - `owner` é nullable: sessão legada fica sem dono (invisível pra todo mundo) até o admin reatribuir no Admin UI do PB. `cascadeDelete` → apagar o usuário apaga a sessão (cascateia em webhooks/mensagens).
 - `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
   - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
   - **Esta é a lista que o FastAPI consulta no `handle_new_message` pra fazer o forwarding.**
+  - **Não tem campo de dono** — o dono é derivado da sessão (`session.owner`).
 - `telegram_messages`: audit log. Append-only (updateRule/deleteRule = null). Schema: `session` (relation), `telegram_message_id` (id da msg no Telegram, `event.id`; único **por chat**, `0` = registro legado sem o campo), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. Índice composto `(session, chat_id, telegram_message_id)` — NON-unique de propósito, o mesmo `message_id` reaparece em cada chat novo. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
+  - **Não tem campo de dono** — o dono é derivado da sessão (`session.owner`).
+
+## Isolamento por usuário (OBRIGATÓRIO em qualquer mudança)
+
+Toda sessão pertence a **um** usuário. As rules do PB **e** o backend protegem isso:
+
+| Collection | `listRule`/`viewRule` | `create`/`update`/`delete` |
+|---|---|---|
+| `telegram_sessions` | `owner = @request.auth.id` | `null` (só superuser) |
+| `telegram_webhooks` | `session.owner = @request.auth.id` | `null` (só superuser) |
+| `telegram_messages` | `session.owner = @request.auth.id` | `null` (só superuser) |
+
+Regras pra não furar o isolamento:
+
+- **Escrita no PB é SÓ do FastAPI**, com o *service token* (superuser). Antes de
+  escrever, o backend valida o `owner` (`_resolve_owned_session` /
+  `_assert_webhook_owned`). Nunca repassar o token do caller pro PB.
+- **Erro de recurso alheio é 404** (não 403) — não revela que existe.
+- O `service token` **tem que ser de superuser**, senão toda escrita falha
+  (`createRule = null`). O container checa isso no boot.
+- **Ordem de deploy: backend primeiro → depois a migration.** O backend detecta
+  a ausência do campo `owner` e mantém o comportamento permissivo (warning no
+  log), então nada quebra na janela entre os dois deploys.
+- `phone` tem índice UNIQUE **global**: o primeiro dono vence. Segundo usuário
+  que parear o mesmo número recebe **409**.
+- Sessão sem `owner` = invisível pra todo mundo (rules negam). O forwarding dos
+  webhooks NÃO depende de dono — a conta continua ativa, só o painel não lista.
+  Reatribuição é manual no Admin UI do PB (sem reiniciar container).
 
 ## API Backend
 
@@ -123,8 +153,8 @@ Endpoints principais do FastAPI (Telegram service). Lista completa no README.
 | Method | Endpoint | Descrição |
 |--------|----------|-----------|
 | POST | /api/send-code | Envia código Telegram (signup) |
-| POST | /api/verify-code | Verifica código + cria sessão |
-| GET | /api/sessions | Lista sessões + webhooks_count |
+| POST | /api/verify-code | Verifica código + cria sessão. **409** se o número já estiver vinculado a outro usuário (primeiro dono vence). Registro no PB é **síncrono** (antes era background task e a falha não chegava ao usuário). |
+| GET | /api/sessions | Lista **só as sessões do caller** (PB = dono; disco = credencial; lista = interseção) + webhooks_count |
 | POST | /api/sessions/{id}/webhooks | Cria webhook |
 | PATCH | /api/webhooks/{id} | Edita webhook (URL/filtros/enabled) |
 | DELETE | /api/webhooks/{id} | Remove webhook |
@@ -132,7 +162,7 @@ Endpoints principais do FastAPI (Telegram service). Lista completa no README.
 | POST | /api/webhooks/{id}/test | POSTa payload de teste na URL (FastAPI direto, não exercita o forwarding real) |
 | POST | /api/send-message | Envia mensagem via sessão Telegram. Body: `{session_id, chat_id (int ou @username), text?, parse_mode? (plain\|html), image_url? (URL pública validada SSRF), reply_to_message_id?}`. Schema completo + erros comuns + fluxo anti-loop no README. |
 | GET | /health | Health check (`active_sessions`, `saved_sessions`) |
-| GET | /api/admin/sessions | Debug — lista arquivos `/app/sessions/*.json` |
+| GET | /api/admin/sessions | Debug — lista arquivos `/app/sessions/*.json` **do caller** (não expõe sessões de terceiros) |
 
 **Schema do payload** que o `handle_new_message` envia pros webhooks (e que o `/api/webhooks/{id}/test` replica): ver seção "Webhook payload" no README. Estrutura de alto nível:
 

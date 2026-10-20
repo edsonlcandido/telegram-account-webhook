@@ -234,6 +234,10 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 
 **Auth:** `Authorization: Bearer <jwt-do-pocketbase>`. O middleware `verify_pb_auth` valida contra o PB.
 
+**Escopo por usuário:** todos os endpoints abaixo só enxergam os recursos do
+usuário autenticado. Sessão/webhook de outra pessoa → `404`. "Dono" da sessão =
+campo `telegram_sessions.owner`. Ver "Isolamento por usuário".
+
 ### Webhook payload (POST recebido pelo seu endpoint)
 
 Schema atual (gerado pelo FastAPI no `handle_new_message`):
@@ -492,15 +496,65 @@ curl -X POST https://api-telegram.ehtudo.app/api/integration-token \
 ## Coleções PocketBase
 
 - `users`: Auth nativo do PB (email/senha → JWT).
-- `telegram_sessions`: `phone`, `session_id` (chave do arquivo de credencial), `name` (apelido opcional editável).
+- `telegram_sessions`: `phone`, `session_id` (chave do arquivo de credencial), `name` (apelido opcional editável), **`owner`** (relation → `users` = dono da sessão).
   - **`StringSession` (credencial) NÃO fica aqui** — só no `/app/sessions/*.json` no container `telegram-account-webhook-telegram`.
   - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container, não no PB.
 - `telegram_webhooks`: `name`, `enabled`, `url` + filtros (`direction`, `chat_type`, `text_match`).
   - Relation com `telegram_sessions` (`cascadeDelete`). Vários webhooks por sessão.
   - O PB é source of truth — o arquivo é só pra carregar o cliente Telethon de volta no boot.
-- `telegram_messages`: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. **Append-only** (updateRule e deleteRule = null). O FastAPI faz INSERT em toda mensagem (incoming + outgoing) que chega — é o audit log completo. O hook do PB é no-op (não faz forwarding).
+  - **Não tem campo de dono próprio**: o dono é derivado da sessão (`session.owner`).
+- `telegram_messages`: `session` (relation), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. **Append-only** — só o FastAPI grava (superuser); update/delete = null. O FastAPI faz INSERT em toda mensagem (incoming + outgoing) que chega — é o audit log completo. O hook do PB é no-op (não faz forwarding).
+  - **Não tem campo de dono próprio**: o dono é derivado da sessão (`session.owner`).
 
-Schema inicial em `pocketbase/pb_migrations/1791780600_create_telegram_sessions.js`. Mudanças posteriores (alias, webhooks, etc.) via migrations idempotentes (regra: nunca editar uma migration depois de commitada — sempre criar uma nova).
+Schema inicial em `pocketbase/pb_migrations/1791780600_create_telegram_sessions.js`. Mudanças posteriores (alias, webhooks, owner, etc.) via migrations idempotentes (regra: nunca editar uma migration depois de commitada — sempre criar uma nova).
+
+---
+
+## Isolamento por usuário
+
+Cada sessão Telegram pertence a **um** usuário do PocketBase. Nenhum usuário
+autenticado consegue ver, editar, apagar, usar (enviar mensagem) ou "pairar" a
+conta Telegram de outro.
+
+**Duas camadas:**
+
+1. **Rules do PocketBase** — protegem o acesso direto do browser às coleções
+   (`telegram_sessions` e `telegram_messages` são lidas no front com o JWT do
+   usuário):
+
+   | Collection | `listRule` / `viewRule` | `create`/`update`/`delete` |
+   |---|---|---|
+   | `telegram_sessions` | `owner = @request.auth.id` | `null` (só superuser) |
+   | `telegram_webhooks` | `session.owner = @request.auth.id` | `null` (só superuser) |
+   | `telegram_messages` | `session.owner = @request.auth.id` | `null` (só superuser) |
+
+2. **Checagem explícita no FastAPI** — protege os endpoints da API, que
+   escrevem com o *service token* (superuser, que ignora as rules). Toda
+   operação valida o `owner` antes de agir.
+
+**Escritas são só do FastAPI** (`createRule`/`updateRule`/`deleteRule = null`).
+O `service token` **precisa ser de superuser** — se não for, todas as escritas
+falham (o container loga um erro no boot). Use
+`POCKETBASE_SERVICE_TOKEN=<jwt-de-superuser>` ou
+`POCKETBASE_ADMIN_EMAIL`+`PASSWORD`.
+
+**Sessões legadas (criadas antes do vínculo)**: ficam com `owner` vazio e
+**invisíveis pra todo mundo** (as rules negam) — o forwarding dos webhooks
+continua funcionando, só o painel não lista. O log de reconciliação no boot do
+container lista quais são. Para liberar, abra o Admin UI do PB
+(`https://telegram-webhook.ehtudo.app/_/`) → collection `telegram_sessions` →
+preencha o campo `owner` da sessão com o usuário dono. **Não precisa reiniciar
+nada**: a lista, os webhooks e o histórico de mensagens passam a aparecer pro
+novo dono no próximo request (o dono de webhook/mensagem é derivado da sessão).
+
+**Número de Telegram duplicado**: o índice UNIQUE de `phone` é global e o
+primeiro dono vence. Se um segundo usuário parear o mesmo número, recebe
+**409** ("Esta conta Telegram já está vinculada a outro usuário") e nada é
+alterado.
+
+**Erros de isolamento** (todos `404`, pra não revelar que o recurso existe):
+sessão/webhook de outra pessoa em qualquer endpoint. `409` só no
+`/api/verify-code` (conta já vinculada a outro usuário).
 
 ---
 
