@@ -147,22 +147,29 @@ const verifyCode = async () => {
 
 // Voltar
 const goBack = () => {
+  // No passo do código, o "Voltar" volta UM passo do cadastro (tratado
+  // aqui). Nos demais passos o AppNav navega pro dashboard (destino em
+  // `backTo`) — por isso o `router.push` saiu daqui.
   if (step.value === 'code') {
     step.value = 'phone'
     code.value = ''
     countdown.value = 0
     requires2fa.value = false
     password2fa.value = ''
-  } else {
-    router.push('/dashboard')
   }
 }
+
+// Destino do botão "Voltar" do AppNav:
+//  - no passo do código → `''` (string vazia): o AppNav mostra o botão mas
+//    NÃO navega, porque o clique só volta um passo do cadastro
+//  - nos demais passos → `/dashboard`, igual às outras páginas do app
+const backTo = computed(() => (step.value === 'code' ? '' : '/dashboard'))
 </script>
 
 <template>
   <div class="min-h-screen bg-gray-50">
     <!-- Navigation -->
-    <AppNav title="Adicionar Conta" :back-to="null" @back="goBack" />
+    <AppNav title="Adicionar Conta" :back-to="backTo" @back="goBack" />
 
     <!-- Main Content -->
     <main class="app-container py-12">

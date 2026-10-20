@@ -73,7 +73,13 @@ const props = withDefaults(
     title: string
     /** Complemento opcional do título (ex.: nome da conta) */
     subtitle?: string
-    /** Destino do botão "Voltar". `null` esconde o botão. */
+    /**
+     * Destino do botão "Voltar".
+     *  - `null`  → esconde o botão (ex.: dashboard, que é a raiz do app)
+     *  - `''`    → mostra o botão, mas não navega (a página trata o
+     *              clique no evento `back`)
+     *  - string → mostra o botão e navega pra essa rota
+     */
     backTo?: string | null
   }>(),
   { subtitle: undefined, backTo: '/dashboard' },
@@ -91,10 +97,15 @@ const userName = computed(() => {
 /**
  * Emite `back` antes de navegar, para a página poder interceptar
  * (ex.: o wizard de Adicionar Conta, que volta um passo em vez de sair).
+ *
+ * O destino é lido ANTES do `emit` de propósito: o handler da página pode
+ * mudar o estado (e com isso o `backTo` computado), mas a navegação já
+ * decidida no clique não deve ser alterada por causa disso.
  */
 function onBack() {
+  const target = props.backTo
   emit('back')
-  if (props.backTo) router.push(props.backTo)
+  if (target) router.push(target)
 }
 
 function handleLogout() {
