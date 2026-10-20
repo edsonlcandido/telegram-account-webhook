@@ -218,7 +218,7 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 |---|---|---|---|
 | `GET` | `/health` | — | Health check (`active_sessions`, `saved_sessions`) |
 | `POST` | `/api/send-code` | sim | Inicia login: envia SMS/código pro `phone_number` |
-| `POST` | `/api/verify-code` | sim | Verifica código + 2FA (se houver), cria sessão, aceita `name` (apelido opcional) |
+| `POST` | `/api/verify-code` | sim | Verifica código + 2FA (se houver), cria sessão, aceita `name` (apelido opcional) e `password` (senha de 2FA) |
 | `GET` | `/api/sessions` | sim | Lista sessões (com `name` e `webhook_count`) |
 | `DELETE` | `/api/session/{session_id}` | sim | Remove sessão (desconecta + apaga arquivo) |
 | `PATCH` | `/api/sessions/{session_id}` | sim | Renomeia sessão (`name`) |
@@ -233,6 +233,13 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa
 | `GET` | `/api/admin/sessions` | sim | Lista arquivos em `/app/sessions/*.json` (debug) |
 
 **Auth:** `Authorization: Bearer <jwt-do-pocketbase>`. O middleware `verify_pb_auth` valida contra o PB.
+
+**Conta com 2FA (verificação em duas etapas):** o 1º `POST /api/verify-code` (só com
+o código do SMS/app) responde **401** com
+`{"detail": {"error": "two_factor_required", "message": "..."}}`. O client pendente
+fica vivo → o 2º POST **com `password`** (a senha de 2FA da conta) conclui o
+pareamento. Senha errada → **400** `"Senha de 2FA incorreta. Confira e tente de novo."`.
+O front detecta o `error: two_factor_required` e mostra o campo de senha.
 
 **Escopo por usuário:** todos os endpoints abaixo só enxergam os recursos do
 usuário autenticado. Sessão/webhook de outra pessoa → `404`. "Dono" da sessão =

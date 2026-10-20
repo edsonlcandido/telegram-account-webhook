@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, AnyHttpUrl
 from telethon import TelegramClient
+from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
 from telethon.events import NewMessage
 from telethon.sessions import StringSession
 from telethon.tl import types as tl_types
@@ -1056,8 +1057,18 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     logger.info("👋 FastAPI Shutting down...")
-    for session_id, client in active_clients.items():
-        await client.disconnect()
+    for session_id, client in list(active_clients.items()):
+        # `active_clients` também guarda entradas que NÃO são clients: o
+        # `phone_code_hash` (string) e o client pendente do pairing. Só o
+        # TelegramClient tem `disconnect()` — sem esse check o shutdown
+        # quebrava com AttributeError se o container parasse entre o
+        # send-code e o verify-code.
+        if not hasattr(client, "disconnect"):
+            continue
+        try:
+            await client.disconnect()
+        except Exception as e:
+            logger.warning(f"Falha ao desconectar sessão {session_id}: {e}")
     logger.info("✅ Todas as sessões desconectadas")
 
 
@@ -1534,18 +1545,46 @@ async def verify_code(
 
     try:
         # Verifica código
-        if body.password:
-            await client.sign_in(
-                body.phone_number,
-                code=body.code,
-                password=body.password,
-                phone_code_hash=phone_code_hash
+        try:
+            if body.password:
+                await client.sign_in(
+                    body.phone_number,
+                    code=body.code,
+                    password=body.password,
+                    phone_code_hash=phone_code_hash
+                )
+            else:
+                await client.sign_in(
+                    body.phone_number,
+                    code=body.code,
+                    phone_code_hash=phone_code_hash
+                )
+        except SessionPasswordNeededError:
+            # Conta com verificação em duas etapas (2FA): o Telegram exige a
+            # SENHA da conta, não só o código do SMS/app.
+            #
+            # O client pendente e o `phone_code_hash` ficam VIVOS de propósito
+            # (não descarta nada aqui): a próxima chamada com a senha completa
+            # o login. O front detecta o `error: two_factor_required` e
+            # mostra o campo de senha.
+            logger.info(
+                f"🔐 2FA exigido na verificação de {body.phone_number} — "
+                f"aguardando senha de 2FA"
             )
-        else:
-            await client.sign_in(
-                body.phone_number,
-                code=body.code,
-                phone_code_hash=phone_code_hash
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "two_factor_required",
+                    "message": (
+                        "Esta conta usa verificação em duas etapas (2FA). "
+                        "Informe a senha de 2FA para continuar."
+                    ),
+                },
+            )
+        except PasswordHashInvalidError:
+            raise HTTPException(
+                status_code=400,
+                detail="Senha de 2FA incorreta. Confira e tente de novo.",
             )
 
         # Salva sessão
