@@ -229,6 +229,13 @@ def pb_service_headers() -> dict:
 # Armazenamento em memória: session_id -> TelegramClient
 active_clients: Dict[str, TelegramClient] = {}
 
+# Pairings que JÁ validaram o código e estão esperando a senha de 2FA.
+# Chave: `pending_<phone>` (o mesmo session_id do pairing em andamento).
+# Existe porque o passo da senha do Telethon é um `sign_in` separado, sem
+# o código — sem essa flag o backend não saberia que pode pular direto
+# pro passo da senha.
+pending_2fa: Dict[str, bool] = {}
+
 
 # =============================================================================
 # Modelos Pydantic
@@ -1363,6 +1370,7 @@ async def _discard_pending_client(session_id: str, hash_key: str, client) -> Non
     """
     active_clients.pop(session_id, None)
     active_clients.pop(hash_key, None)
+    pending_2fa.pop(session_id, None)
     try:
         await client.disconnect()
     except Exception as e:
@@ -1505,6 +1513,8 @@ async def send_code(request: SendCodeRequest, _user: dict = Depends(verify_pb_au
         # Salva temporariamente para usar na verificação
         active_clients[session_id] = client
         active_clients[f"{session_id}_hash"] = result.phone_code_hash
+        # Código novo => recomeça o estado de 2FA
+        pending_2fa.pop(session_id, None)
 
         return {
             "success": True,
@@ -1544,14 +1554,22 @@ async def verify_code(
     phone_code_hash = active_clients[hash_key]
 
     try:
-        # Verifica código
+        # Verifica código (e senha de 2FA, se a conta exigir)
         try:
-            if body.password:
+            if body.password and pending_2fa.get(session_id):
+                # CONTINUAÇÃO do 2FA: o código JÁ foi validado na
+                # tentativa anterior (a sessão ficou pendente esperando a
+                # senha). O passo da senha é um `sign_in` SEPARADO, SEM o
+                # código.
+                #
+                # Por que separado: no Telethon 1.36 o `sign_in` é um
+                # if/elif — com `code` E `password` juntos o ramo
+                # `elif code:` vence, a senha é IGNORADA e o Telegram
+                # responde SessionPasswordNeededError de novo (a senha
+                # nunca chega a ser checada).
                 await client.sign_in(
                     body.phone_number,
-                    code=body.code,
                     password=body.password,
-                    phone_code_hash=phone_code_hash
                 )
             else:
                 await client.sign_in(
@@ -1565,22 +1583,37 @@ async def verify_code(
             #
             # O client pendente e o `phone_code_hash` ficam VIVOS de propósito
             # (não descarta nada aqui): a próxima chamada com a senha completa
-            # o login. O front detecta o `error: two_factor_required` e
-            # mostra o campo de senha.
-            logger.info(
-                f"🔐 2FA exigido na verificação de {body.phone_number} — "
-                f"aguardando senha de 2FA"
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error": "two_factor_required",
-                    "message": (
-                        "Esta conta usa verificação em duas etapas (2FA). "
-                        "Informe a senha de 2FA para continuar."
-                    ),
-                },
-            )
+            # o login. A flag `pending_2fa` marca que o código já valeu.
+            # O front detecta o `error: two_factor_required` e mostra o campo
+            # de senha.
+            if not body.password:
+                pending_2fa[session_id] = True
+                logger.info(
+                    f"🔐 2FA exigido na verificação de {body.phone_number} — "
+                    f"aguardando senha de 2FA"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "two_factor_required",
+                        "message": (
+                            "Esta conta usa verificação em duas etapas (2FA). "
+                            "Informe a senha de 2FA para continuar."
+                        ),
+                    },
+                )
+            # O código foi aceito mas a conta exige 2FA e a senha veio
+            # junto: completa o login agora com o passo da senha.
+            try:
+                await client.sign_in(
+                    body.phone_number,
+                    password=body.password,
+                )
+            except PasswordHashInvalidError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Senha de 2FA incorreta. Confira e tente de novo.",
+                )
         except PasswordHashInvalidError:
             raise HTTPException(
                 status_code=400,
@@ -1632,6 +1665,7 @@ async def verify_code(
         active_clients[final_session_id] = client
         del active_clients[session_id]
         del active_clients[hash_key]
+        pending_2fa.pop(session_id, None)
 
         # Registra handler de novas mensagens — sem isso, webhook nunca dispara
         # em contas criadas via signup (só funciona pra contas carregadas do
