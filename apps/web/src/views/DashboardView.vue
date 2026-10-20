@@ -62,7 +62,7 @@
           </div>
 
           <!-- Stat Card: Webhooks -->
-          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-green-200">
+          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-accent-200">
             <div class="p-6">
               <div class="flex items-center">
                 <div class="flex-shrink-0">
@@ -92,7 +92,7 @@
           </div>
 
           <!-- Stat Card: Status -->
-          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-accent-200">
+          <div class="group bg-white overflow-hidden shadow-xl rounded-2xl hover:shadow-2xl transition-all transform hover:-translate-y-1 border-2 border-transparent hover:border-green-200">
             <div class="p-6">
               <div class="flex items-center">
                 <div class="flex-shrink-0">
@@ -114,8 +114,8 @@
                 </div>
               </div>
             </div>
-            <div class="bg-accent-50 px-6 py-3">
-              <p class="text-xs text-accent-700 font-medium">
+            <div class="bg-green-50 px-6 py-3">
+              <p class="text-xs text-green-700 font-medium">
                 Sistema {{ telegramStore.error ? '⚠️' : '✓' }} ativo
               </p>
             </div>
