@@ -405,6 +405,138 @@ def delete_session_file(session_id: str):
 # (ex: n8n respondendo) acontece SÓ no loop de webhooks, não no INSERT.
 
 
+# =============================================================================
+# Resolução de peer — caso do "primeiro contato"
+# =============================================================================
+#
+# BUG (primeiro contato): quando alguém que NUNCA conversou com a conta
+# monitorada manda mensagem, o Telegram entrega o update SEM o objeto
+# `User` completo no batch. O Telethon resolve `event.sender`/`event.chat`
+# EXCLUSIVAMENTE a partir do dict `entities` que veio naquele update
+# (`utils._get_entity_pair` → `entities.get(peer_id)`), então os dois
+# ficam `None`.
+#
+# O fallback `client.get_entity(peer_id)` TAMBÉM falha: sem `access_hash`
+# não existe `InputPeerUser` possível, e o único pedido viável
+# (`users.getUsers` com access_hash=0) só resolve pra contatos e bots.
+#
+# SOLUÇÃO: `messages.getDialogs` é a única fonte que devolve o User
+# completo (com access_hash) de um peer desconhecido — o dialog é criado
+# pelo Telegram no momento em que a mensagem chega. É exatamente a
+# estratégia que o próprio Telethon usa em `ChatGetter.get_input_chat()`
+# ("the chat may be recent, look in dialogs"). O fetch também popula o
+# cache de entidades do Telethon, então depois dele `send_message(chat_id)`
+# por ID passa a funcionar (era o segundo lado do bug: a resposta do n8n
+# pro contato novo também quebrava).
+# =============================================================================
+
+# Quantos dialogs varrer atrás do peer desconhecido. O dialog novo fica
+# no topo da lista (ordenada por atividade recente), então o peer é
+# encontrado nos primeiros.
+_PEER_DIALOG_SCAN_LIMIT = 100
+
+# Cache curto de peers JÁ resolvidos. No chat privado o sender e o chat
+# são o mesmo user (sender_id == chat_id) — sem isso, o `iter_dialogs`
+# rodaria duas vezes na mesma mensagem.
+_PEER_ENTITY_CACHE: Dict[str, tuple] = {}
+_PEER_ENTITY_CACHE_TTL = 300.0  # 5 min
+
+# Peers que falharam a resolução recentemente — evita martelar o
+# `getDialogs` a cada mensagem do mesmo peer (ex: usuário bloqueado).
+_PEER_RESOLVE_FAILED: Dict[str, float] = {}
+_PEER_RESOLVE_FAILED_TTL = 60.0
+
+
+def _peer_cache_key(client, peer_id: int) -> str:
+    """Chave de cache por (client, peer) — `id(client)` isola sessões."""
+    return f"{id(client)}:{peer_id}"
+
+
+async def _resolve_peer_entity(client, peer_id: int):
+    """Resolve um peer (user/chat/channel) na entidade completa do Telethon.
+
+    Retorna `tl.types.User` / `Chat` / `Channel`, ou None se não conseguir.
+
+    Cadeia:
+    1) `client.get_entity(peer_id)` — cache em memória → session (sqlite).
+       Cobre todo peer já conhecido (contato, grupo, conversa antiga).
+    2) `client.iter_dialogs(...)` — varre os dialogs recentes atrás do peer.
+       É o que resolve o caso de PRIMEIRO CONTATO, porque o Telegram
+       devolve o `access_hash` do User junto com o dialog.
+    """
+    if not peer_id:
+        return None
+
+    cache_key = _peer_cache_key(client, peer_id)
+    now = time.time()
+
+    # Cache curto: o mesmo peer pode ser pedido duas vezes na mesma
+    # mensagem (sender + chat são o mesmo user no chat privado).
+    cached = _PEER_ENTITY_CACHE.get(cache_key)
+    if cached and (now - cached[1]) < _PEER_ENTITY_CACHE_TTL:
+        return cached[0]
+
+    # Cooldown: peer que já falhou não é reprocessado agora.
+    failed_at = _PEER_RESOLVE_FAILED.get(cache_key)
+    if failed_at is not None and (now - failed_at) < _PEER_RESOLVE_FAILED_TTL:
+        return None
+
+    # 1) Cache do Telethon (memória + sqlite da session).
+    try:
+        entity = await client.get_entity(peer_id)
+        if entity is not None:
+            _PEER_ENTITY_CACHE[cache_key] = (entity, now)
+            return entity
+    except Exception as e:
+        logger.info(
+            f"[resolve_peer] peer {peer_id} não está no cache do Telethon "
+            f"({type(e).__name__}) — indo procurar nos dialogs"
+        )
+
+    # 2) Dialogs — peer de primeiro contato aparece aqui (com access_hash).
+    try:
+        async for dialog in client.iter_dialogs(_PEER_DIALOG_SCAN_LIMIT):
+            if dialog.id != peer_id:
+                continue
+            entity = dialog.entity
+            if entity is None:
+                continue
+            logger.info(
+                f"✅ Peer {peer_id} resolvido via dialogs (primeiro contato) "
+                f"— tipo={type(entity).__name__}"
+            )
+            _PEER_ENTITY_CACHE[cache_key] = (entity, now)
+            return entity
+    except Exception as e:
+        logger.warning(
+            f"[resolve_peer] iter_dialogs falhou pro peer {peer_id}: "
+            f"{type(e).__name__}: {e}"
+        )
+
+    # 3) Último recurso: o `iter_dialogs` pode ter populado o cache do
+    #    Telethon com o access_hash mesmo sem achar o dialog.
+    try:
+        entity = await client.get_entity(peer_id)
+        if entity is not None:
+            _PEER_ENTITY_CACHE[cache_key] = (entity, now)
+            return entity
+    except Exception:
+        pass
+
+    logger.warning(f"[resolve_peer] peer {peer_id} não resolvido")
+    _PEER_RESOLVE_FAILED[cache_key] = now
+
+    # Limpa entradas velhas dos dois caches.
+    for key, (_entity, ts) in list(_PEER_ENTITY_CACHE.items()):
+        if now - ts > _PEER_ENTITY_CACHE_TTL:
+            _PEER_ENTITY_CACHE.pop(key, None)
+    for key, ts in list(_PEER_RESOLVE_FAILED.items()):
+        if now - ts > _PEER_RESOLVE_FAILED_TTL:
+            _PEER_RESOLVE_FAILED.pop(key, None)
+
+    return None
+
+
 def _classify_chat_type(event) -> str:
     """Retorna o tipo do chat: 'private' | 'group' | 'supergroup' | 'channel' | 'unknown'."""
     if event.is_private:
@@ -416,99 +548,6 @@ def _classify_chat_type(event) -> str:
         # (o hook pode fazer o refinamento se precisar)
         return "group"
     return "unknown"
-
-
-def _chat_title(event) -> str | None:
-    """Title do chat (pra groups) ou first_name (pra private). None se não tem."""
-    if not event.chat:
-        return None
-    return getattr(event.chat, "title", None) or getattr(event.chat, "first_name", None)
-
-
-def _sender_name(event) -> str | None:
-    """Nome completo do sender, ou None."""
-    if not event.sender:
-        return None
-    first = event.sender.first_name or ""
-    last = f" {event.sender.last_name}" if getattr(event.sender, "last_name", None) else ""
-    full = (first + last).strip()
-    return full or None
-
-
-async def _sender_username(event) -> str:
-    """@username do sender no Telegram (sem o @), ou string vazia.
-
-    Vem vazio se:
-    - Sender é um canal (canais usam channel username, não user)
-    - User não tem @username configurado
-    - event.sender ausente (msg anônima)
-    - API do Telegram recusou (user bloqueado, sem permissão, etc)
-
-    Estratégia (tenta em ordem, retorna o primeiro que achar):
-    1) `event.sender.username` — Telethon cacheia quando abre a conversa.
-    2) `event.chat.username` — em chat privado, `event.chat` É o outro
-       user, então é mais confiável que `event.sender` (que pode vir
-       com User object incompleto se o cache do Telethon tá frio).
-    3) `await client.get_entity(sender_id)` — fallback assíncrono via
-       API do Telegram. Funciona se o user já interagiu com a conta
-       monitorada (Telethon tem access_hash em cache).
-    """
-    sender_id = getattr(event, "sender_id", None)
-    is_private = getattr(event, "is_private", False)
-    sender = getattr(event, "sender", None)
-    chat = getattr(event, "chat", None)
-
-    # 1) Sender direto
-    if sender:
-        u = getattr(sender, "username", None)
-        if u:
-            return u
-        # Log diagnóstico quando sender existe mas username=None
-        logger.info(
-            f"[sender_username] sender existe mas username=None; "
-            f"sender_id={sender_id}, is_private={is_private}, "
-            f"sender.first_name={getattr(sender, 'first_name', None)!r}, "
-            f"sender.last_name={getattr(sender, 'last_name', None)!r}, "
-            f"sender.__dict__.keys()={list(sender.__dict__.keys()) if hasattr(sender, '__dict__') else '?'}"
-        )
-    else:
-        logger.info(
-            f"[sender_username] event.sender=None; "
-            f"sender_id={sender_id}, is_private={is_private}"
-        )
-
-    # 2) Em chat privado, chat É o user — checa essa fonte
-    if is_private and chat:
-        u = getattr(chat, "username", None)
-        if u:
-            return u
-        # Log diagnóstico
-        logger.info(
-            f"[sender_username] chat privado mas chat.username=None; "
-            f"chat_id={getattr(chat, 'id', None)}, "
-            f"chat.first_name={getattr(chat, 'first_name', None)!r}, "
-            f"chat.__dict__.keys()={list(chat.__dict__.keys()) if hasattr(chat, '__dict__') else '?'}"
-        )
-
-    # 3) Fallback: busca via API do Telegram
-    client = getattr(event, "client", None)
-    if sender_id and client:
-        try:
-            full = await client.get_entity(sender_id)
-            if full:
-                u = getattr(full, "username", None)
-                if u:
-                    return u
-                logger.info(
-                    f"[sender_username] get_entity OK mas username=None; "
-                    f"sender_id={sender_id}, "
-                    f"first_name={getattr(full, 'first_name', None)!r}, "
-                    f"__dict__.keys()={list(full.__dict__.keys()) if hasattr(full, '__dict__') else '?'}"
-                )
-        except Exception as e:
-            logger.info(f"sender_username fallback fetch falhou: {e}")
-
-    return ""
 
 
 def _user_to_dict(user) -> dict | None:
@@ -616,18 +655,16 @@ async def _sender_full_dict(event) -> dict | None:
         if d:
             return d
 
-    # Fallback: get_entity
+    # Fallback: resolução via cache + dialogs (cobre peer de primeiro
+    # contato — `get_entity` sozinho não basta, precisa do `iter_dialogs`).
     sender_id = getattr(event, "sender_id", None)
     client = getattr(event, "client", None)
     if sender_id and client:
-        try:
-            full = await client.get_entity(sender_id)
-            if full:
-                d = _user_to_dict(full)
-                if d:
-                    return d
-        except Exception as e:
-            logger.info(f"_sender_full_dict fallback fetch falhou: {e}")
+        full = await _resolve_peer_entity(client, sender_id)
+        if full is not None:
+            d = _user_to_dict(full)
+            if d:
+                return d
     return None
 
 
@@ -635,12 +672,12 @@ async def _chat_full_dict(event) -> dict | None:
     """Chat/receiver object completo (User, Chat ou Channel).
 
     Fallback chain (retorna o primeiro que der):
-    1) `event.chat` (cache do Telethon; pode vir None em outgoing pra
-       user novo que o cliente nunca viu)
-    2) `client.get_entity(event.chat_id)` — busca o peer via API.
-       Resolvido internamente pelo Telethon, sem custo de round-trip
-       se o peer já tá em cache.
-    3) Se ambos falharem, retorna None.
+    1) `event.chat` (cache do Telethon; pode vir None pra user de
+       primeiro contato).
+    2) `_resolve_peer_entity` — combina cache + `iter_dialogs`. O
+       `iter_dialogs` é o que resolve o caso de PRIMEIRO CONTATO (o
+       `get_entity` direto não basta, precisa do access_hash que só o
+       `getDialogs` devolve).
     """
     chat = getattr(event, "chat", None)
     if chat:
@@ -649,12 +686,9 @@ async def _chat_full_dict(event) -> dict | None:
     client = getattr(event, "client", None)
     chat_id = getattr(event, "chat_id", None)
     if client and chat_id is not None:
-        try:
-            full = await client.get_entity(chat_id)
-            if full:
-                return _chat_to_dict(full)
-        except Exception as e:
-            logger.info(f"_chat_full_dict fallback fetch falhou: {e}")
+        full = await _resolve_peer_entity(client, chat_id)
+        if full is not None:
+            return _chat_to_dict(full)
     return None
 
 
@@ -2437,14 +2471,10 @@ async def _audit_outgoing_message(
     pb_session_id = items[0]["id"]
 
     # 3) Resolve peer. `sent.chat_id` é int já normalizado pelo Telethon
-    # (negativo pra groups/channels). Usa-o pra hit no cache de entity.
-    try:
-        entity = await client.get_entity(sent.chat_id)
-    except Exception as e:
-        logger.info(
-            f"_audit_outgoing_message: get_entity({sent.chat_id}) falhou: {e}"
-        )
-        entity = None
+    # (negativo pra groups/channels). Usa `_resolve_peer_entity` (que
+    # inclui a varredura de dialogs) pra não perder sender/chat_title
+    # quando a mensagem foi enviada pra alguém de primeiro contato.
+    entity = await _resolve_peer_entity(client, sent.chat_id)
     if entity:
         chat_type = _classify_chat_type_from_entity(entity)
         chat_title = getattr(entity, "title", None) or ""
@@ -2572,6 +2602,22 @@ async def send_message(
     common_kwargs: dict = {}
     if request.reply_to_message_id:
         common_kwargs["reply_to"] = request.reply_to_message_id
+
+    # Resolve o peer ANTES de enviar. `send_message(chat_id)` monta um
+    # `InputPeerUser` a partir do chat_id e falha com "Could not find the
+    # input entity for PeerUser(...)" quando o destinatário é alguém de
+    # PRIMEIRO CONTATO (sem access_hash no cache do Telethon).
+    # `_resolve_peer_entity` varre os dialogs, que é o que traz o
+    # access_hash — sem isso a resposta automatizada pro contato novo
+    # quebrava com HTTP 400.
+    target = request.chat_id
+    if isinstance(target, str) and target.lstrip("-").isdigit():
+        try:
+            target = int(target)
+        except ValueError:
+            target = None
+    if isinstance(target, int):
+        await _resolve_peer_entity(client, target)
 
     try:
         if has_image:

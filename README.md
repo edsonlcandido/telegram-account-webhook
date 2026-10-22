@@ -322,8 +322,33 @@ Schema atual (gerado pelo FastAPI no `handle_new_message`):
 - **`event`**: `"telegram.message"` (reservado pra outros tipos no futuro).
 - **`webhook_id` / `webhook_name`**: identificação do webhook que recebeu (útil quando há vários webhooks na mesma sessão).
 - **`session`**: a conta Telegram que recebeu/mandou a mensagem. `session.user` é a própria conta (com `is_premium`, `username` etc).
-- **`from`**: quem mandou a mensagem (User object completo do Telethon, com fallback via `get_entity` se o cache vier vazio). Vem `null` se for mensagem de canal (sender é o canal, não user). Pra outgoing messages, `from` = a própria conta (igual a `session.user`).
+- **`from`**: quem mandou a mensagem (User object completo do Telethon). Vem `null` se for mensagem de canal (sender é o canal, não user). Pra outgoing messages, `from` = a própria conta (igual a `session.user`).
 - **`chat`**: onde a mensagem foi mandada — User (privado), Group/Supergroup, ou Channel. `title` é resolvido polimorficamente (title de Chat/Channel OU `first_name + last_name` de User privado). `type` é `"private" | "group" | "supergroup" | "channel" | "unknown"`. Tem `username`, `participants_count` (grupos), `about` (descrição do grupo), `has_protected_content`, `is_verified`, `is_creator`.
+
+**Primeiro contato (`from` e `chat` sempre preenchidos):**
+
+Quando alguém que **nunca** conversou com a conta monitorada manda mensagem,
+o Telegram entrega o update sem o objeto `User` completo — e o `get_entity`
+do Telethon também não resolve, porque esse peer ainda não tem
+`access_hash` no cache dele. Sem tratamento, o webhook saía com
+`"from": null` e `"chat": null` (e `sender_name`/`chat_title` vazios).
+
+O backend agora resolve o peer antes de montar o payload
+(`_resolve_peer_entity` em `backend/main.py`):
+
+1. `client.get_entity(peer_id)` — cache em memória → session (sqlite).
+2. `client.iter_dialogs(100)` — varre os dialogs recentes atrás do peer. É a
+   **única** fonte que devolve o `access_hash` de um peer desconhecido,
+   porque o Telegram cria o dialog no momento em que a mensagem chega. Mesma
+   estratégia que o próprio Telethon usa em `ChatGetter.get_input_chat()`.
+
+Efeito colateral importante: como o `iter_dialogs` popula o cache de entidades
+do Telethon, o `POST /api/send-message` com `chat_id` numérico também passa a
+funcionar pra responder alguém de primeiro contato (antes retornava HTTP 400
+com `Could not find the input entity for PeerUser(...)`).
+
+O resolvedor é memoizado por sessão (5 min) e tem cooldown de 60s pra peer que
+não resolve — não martela o `getDialogs` a cada mensagem.
 - **`message`**: a mensagem em si. Mantém os campos legados (`chat_id`, `sender_id`, `sender_name`, etc) pra não quebrar consumers existentes; adiciona `reply_to_msg_id` no fim.
 
 **Campos importantes:**
