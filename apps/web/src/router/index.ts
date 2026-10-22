@@ -18,19 +18,19 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: LoginView,
-      meta: { requiresGuest: true },
+      meta: { requiresGuest: true, title: 'Login' },
     },
     {
       path: '/dashboard',
       name: 'dashboard',
       component: DashboardView,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: 'Dashboard' },
     },
     {
       path: '/add-telegram',
       name: 'add-telegram',
       component: AddTelegramView,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: 'Adicionar Conta' },
     },
     {
       // Legacy: /webhook/:sessionId → redireciona pra /webhooks/:sessionId
@@ -41,14 +41,14 @@ const router = createRouter({
       path: '/webhooks/:sessionId',
       name: 'webhooks-list',
       component: WebhooksListView,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: 'Webhooks' },
       props: true,
     },
     {
       path: '/docs',
       name: 'api-docs',
       component: ApiDocsView,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: 'Documentação da API' },
     },
     {
       // Lista de mensagens estilo Telegram Web. `sessionId` é opcional —
@@ -56,10 +56,18 @@ const router = createRouter({
       path: '/messages/:sessionId?',
       name: 'messages',
       component: MessagesView,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, title: 'Mensagens' },
       props: true,
     },
   ],
+})
+
+// Título do app (aba do navegador). O index.html usa o mesmo nome.
+const APP_TITLE = 'Telegram Webhook'
+
+router.afterEach((to) => {
+  const pageTitle = typeof to.meta.title === 'string' ? to.meta.title : ''
+  document.title = pageTitle ? `${pageTitle} · ${APP_TITLE}` : APP_TITLE
 })
 
 // Navigation guard - verifica a autenticação com o servidor
