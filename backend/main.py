@@ -2610,6 +2610,10 @@ async def send_message(
     # `_resolve_peer_entity` varre os dialogs, que é o que traz o
     # access_hash — sem isso a resposta automatizada pro contato novo
     # quebrava com HTTP 400.
+    #
+    # Falha aqui NÃO bloqueia o envio: o `send_message` abaixo dá o erro
+    # real ("Could not find the input entity...") se o peer realmente
+    # não existir. Só não queremos que um erro de resolução vire 500.
     target = request.chat_id
     if isinstance(target, str) and target.lstrip("-").isdigit():
         try:
@@ -2617,7 +2621,13 @@ async def send_message(
         except ValueError:
             target = None
     if isinstance(target, int):
-        await _resolve_peer_entity(client, target)
+        try:
+            await _resolve_peer_entity(client, target)
+        except Exception as e:
+            logger.warning(
+                f"⚠️ resolução do peer {target} falhou antes do envio "
+                f"(sessão {request.session_id}): {e}"
+            )
 
     try:
         if has_image:
