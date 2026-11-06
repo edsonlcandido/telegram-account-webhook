@@ -351,7 +351,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             </svg>
           </summary>
           <div class="px-6 pb-6 text-gray-600">
-            Não! As mensagens são apenas encaminhadas do Telegram para seu webhook e descartadas. Não armazenamos conteúdo de mensagens.
+            Sim! Como tudo roda no seu próprio servidor, as mensagens ficam salvas no seu próprio banco de dados (PocketBase). É isso que permite abrir a caixa de entrada no painel, navegar pelas conversas e responder de lá — sem precisar ir até o Telegram. As mensagens também continuam sendo encaminhadas normalmente para o seu webhook. Cada sessão fica vinculada a um usuário: apenas você enxerga as suas mensagens, e apagar a conta remove o histórico.
           </div>
         </details>
 
