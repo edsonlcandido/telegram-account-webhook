@@ -203,14 +203,7 @@ Invoke-WebRequest -Method POST `
   -ContentType 'application/json' -Body $body -UseBasicParsing
 ```
 
-Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa via CLI oficial do Easypanel (API key por perfil local, guardada no Windows Credential Manager — nunca no repo):
-
-```bash
-easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook --force-rebuild true --yes
-easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook-telegram --force-rebuild true --yes
-```
-
-O perfil é criado com `easypanel server add <perfil> <url-do-painel>`.
+Os tokens ficam nas configs de cada serviço no painel do Easypanel e nunca no repo. O webhook acima só dispara o rebuild — pra ver o log do serviço use o painel (serviço → Logs) ou o CLI oficial `easypanel` com um perfil configurado (`easypanel server add <perfil> <url-do-painel>`; sem perfil o CLI nem expõe o grupo `logs`).
 
 ### Após o deploy
 

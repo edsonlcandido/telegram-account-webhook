@@ -228,13 +228,7 @@ $body = '{}'
 Invoke-WebRequest -Method POST -Uri '<easypanel-host>/api/deploy/<token-do-servico-application>' -ContentType 'application/json' -Body $body -UseBasicParsing
 ```
 
-Ou via CLI oficial do Easypanel (API key por perfil local, guardada no Windows Credential Manager — nunca no repo):
-
-```bash
-easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook --force-rebuild true --yes
-```
-
-`--force-rebuild` exige valor (`true`) e `--yes` é obrigatório em shell não-interativo (sem ele o CLI aborta). O perfil é criado com `easypanel server add <perfil> <url-do-painel>`.
+Esse webhook só dispara o rebuild — ele não devolve logs. Pra ver o log do serviço: Easypanel > projeto > serviço > Logs, ou o CLI oficial `easypanel` com um perfil configurado (`easypanel server add <perfil> <url-do-painel>`; sem perfil o CLI nem expõe o grupo `logs`).
 
 ## Pegadinhas conhecidas (Vue 3 SFC + vue-tsc)
 
@@ -323,9 +317,10 @@ git commit -m "fix(ui): descrição da mudança"
 git push
 
 # 5) Deploy — dispara rebuild do serviço Application no Easypanel
-#    Via CLI oficial (API key por perfil local no Windows Credential Manager):
-easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook --force-rebuild true --yes
-#    NÃO usar "telegram-account-webhook-telegram" (esse é o backend)
+#    Webhook de deploy do serviço (token fica no painel, fora do repo):
+$body = '{}'
+Invoke-WebRequest -Method POST -Uri '<easypanel-host>/api/deploy/<token-do-servico-application>' -ContentType 'application/json' -Body $body -UseBasicParsing
+#    NÃO usar o token do serviço "telegram-account-webhook-telegram" (esse é o backend)
 #    Espera 3-5min e checa se subiu:
 curl -sS -m 10 https://telegram-webhook.ehtudo.app/api/health
 #    (esse endpoint é servido pelo PB 0.40 — NÃO é /health, que dá 404)
@@ -387,7 +382,7 @@ git commit -m "feat(pb): descrição"
 git push
 
 # 8) Deploy — rebuild do serviço Application
-easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook --force-rebuild true --yes
+Invoke-WebRequest -Method POST -Uri '<easypanel-host>/api/deploy/<token-do-servico-application>' -ContentType 'application/json' -Body '{}' -UseBasicParsing
 #    Verificar que a migration rodou: log do Easypanel (se acessível)
 #    ou admin UI do PB em https://telegram-webhook.ehtudo.app/_/
 ```
@@ -420,8 +415,8 @@ git commit -m "fix(api): descrição"
 git push
 
 # 5) Deploy — rebuild do Telegram API
-easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook-telegram --force-rebuild true --yes
-#    DIFERENTE do Application (eh-tudo/telegram-account-webhook)!
+Invoke-WebRequest -Method POST -Uri '<easypanel-host>/api/deploy/<token-do-servico-telegram>' -ContentType 'application/json' -Body '{}' -UseBasicParsing
+#    DIFERENTE do token do Application (<token-do-servico-application>)!
 #    Verificar que subiu e o service token está OK (sem isso o
 #    container crasha no lifespan):
 curl -sS -m 10 https://api-telegram.ehtudo.app/health
@@ -474,9 +469,9 @@ if (Test-Path apps/landing/src) { cmd.exe /c "cd /d apps\landing && npm run buil
   usuário vai ficar sem saber. O Easypanel demora 3-5min pra detectar
   falha, e o log do container muitas vezes não é acessível.
 - ❌ **Push sem deploy** — `autoDeploy: false` no Easypanel. Push
-  sozinho NÃO rebuilda. Sempre disparar o rebuild via CLI do Easypanel
-  (`easypanel -s <perfil> app deploy <project>/<service> --force-rebuild true --yes`)
-  ou webhook de deploy com token.
+  sozinho NÃO rebuilda. Sempre disparar o rebuild pelo webhook de deploy
+  do serviço (`POST <easypanel-host>/api/deploy/<token-do-servico>`) —
+  o token fica no painel, nunca no repo.
 - ❌ **Deployar serviço errado** — `telegram-account-webhook` é o PB
   + frontend, `telegram-account-webhook-telegram` é o FastAPI. Trocar
   o nome deploya o serviço errado e o que você mexeu não vai pra prod.

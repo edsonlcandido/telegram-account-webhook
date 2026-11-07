@@ -281,9 +281,8 @@ some cases, so always check for the error line, not just the listen line.
    any code that consumes the new collection).
 2. `git add` the migration + AGENTS.md / skill changes.
 3. Push, trigger the Easypanel deploy (see AGENTS.md "Deploy não é 100%
-   automático" — `autoDeploy: false`, Easypanel CLI
-   `easypanel -s <perfil> app deploy <project>/<service> --force-rebuild true --yes`
-   or webhook).
+   automático" — `autoDeploy: false`, webhook
+   `POST <easypanel-host>/api/deploy/<token-do-servico>`).
 4. After ~45s verify: `curl -s https://telegram-webhook.ehtudo.app/` should
    return 200 (not 502). If 502, the new collection probably failed to
    create — read the previous step's "always check `failed to apply

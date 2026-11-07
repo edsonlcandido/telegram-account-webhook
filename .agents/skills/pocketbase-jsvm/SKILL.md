@@ -261,8 +261,9 @@ a route handler and consider re-enabling the hook (currently saved as
 2. `git commit -m "feat(pb): <description>"` and `git push origin main`
 3. Trigger rebuild via Easypanel:
    - Web UI: open service `telegram-account-webhook` → Deploy
-   - Or via CLI: `easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook --force-rebuild true --yes`
    - Or via webhook: `curl -X POST <easypanel-host>/api/deploy/<token-do-servico-application>`
+   - Logs (the UI or the CLI with a configured profile are the only readers):
+     Easypanel > service > Logs
 
 Build + restart takes ~3-5 min. After deploy, hit `https://telegram-webhook.ehtudo.app/api/health`
 or any `/api/*` endpoint to verify the hook is registered and the proxy works.
