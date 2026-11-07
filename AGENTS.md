@@ -230,6 +230,8 @@ Invoke-WebRequest -Method POST -Uri '<easypanel-host>/api/deploy/<token-do-servi
 
 Esse webhook só dispara o rebuild — ele não devolve logs. Pra ver o log do serviço: Easypanel > projeto > serviço > Logs, ou o CLI oficial `easypanel` com um perfil configurado (`easypanel server add <perfil> <url-do-painel>`; sem perfil o CLI nem expõe o grupo `logs`).
 
+A URL real (que embute o token) **não fica neste repo** — ela vive num arquivo local de segredos, indexado por chave de servidor (`servers.<servidor>.<servico>` → URL completa). O painel é a fonte de verdade de onde copiar.
+
 ## Pegadinhas conhecidas (Vue 3 SFC + vue-tsc)
 
 - **`</script>` literal dentro de template string JS quebra o parser SFC** (ele fecha o bloco de script no primeiro `</script>` que achar). Atinge também `</template>` e `</style>`. Soluções:
