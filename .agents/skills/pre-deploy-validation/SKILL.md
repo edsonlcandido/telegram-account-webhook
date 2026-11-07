@@ -135,7 +135,7 @@ git status --short
 git add -A
 git commit -m "..."
 git push
-# 6) Deploy via Easypanel MCP ou webhook
+# 6) Deploy via CLI do Easypanel ou webhook
 ```
 
 ## Erros comuns que PULARAM essas validações já custaram deploy rollbacks

@@ -203,7 +203,14 @@ Invoke-WebRequest -Method POST `
   -ContentType 'application/json' -Body $body -UseBasicParsing
 ```
 
-Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa via MCP: `deployAppService` com `projectName=eh-tudo` e `serviceName=telegram-account-webhook` (e `telegram-account-webhook-telegram` pro backend).
+Os tokens ficam nas configs de cada serviço no painel do Easypanel. Alternativa via CLI oficial do Easypanel (API key por perfil local, guardada no Windows Credential Manager — nunca no repo):
+
+```bash
+easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook --force-rebuild true --yes
+easypanel -s <perfil> app deploy eh-tudo/telegram-account-webhook-telegram --force-rebuild true --yes
+```
+
+O perfil é criado com `easypanel server add <perfil> <url-do-painel>`.
 
 ### Após o deploy
 
