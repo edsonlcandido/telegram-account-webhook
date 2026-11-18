@@ -33,6 +33,12 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Adicionar Conta' },
     },
     {
+      path: '/add-bot',
+      name: 'add-bot',
+      component: () => import('../views/AddBotView.vue'),
+      meta: { requiresAuth: true, title: 'Adicionar Bot' },
+    },
+    {
       // Legacy: /webhook/:sessionId → redireciona pra /webhooks/:sessionId
       path: '/webhook/:sessionId',
       redirect: (to) => `/webhooks/${to.params.sessionId}`,

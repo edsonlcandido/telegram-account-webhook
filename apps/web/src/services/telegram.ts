@@ -68,6 +68,13 @@ export interface SendCodeResponse {
   expires: number
 }
 
+export interface AddBotResponse {
+  success: boolean
+  session_id: string
+  username: string | null
+  message: string
+}
+
 export interface VerifyCodeResponse {
   success: boolean
   session_id: string
@@ -228,6 +235,13 @@ export const telegramApi = {
         // `two_factor_required` na 1ª tentativa).
         password: password || undefined,
       }),
+    })
+  },
+
+  async addBot(botToken: string, name?: string): Promise<AddBotResponse> {
+    return request<AddBotResponse>('/add-bot', {
+      method: 'POST',
+      body: JSON.stringify({ bot_token: botToken, name: name || undefined }),
     })
   },
 

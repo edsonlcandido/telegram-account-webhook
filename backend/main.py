@@ -252,6 +252,11 @@ class VerifyCodeRequest(BaseModel):
     name: Optional[str] = None  # alias amigável pro usuário
 
 
+class AddBotRequest(BaseModel):
+    bot_token: str
+    name: Optional[str] = None  # alias amigável pro usuário
+
+
 class CreateWebhookRequest(BaseModel):
     name: Optional[str] = None
     url: str
@@ -1712,6 +1717,92 @@ async def verify_code(
             "message": "Conta pareada com sucesso!"
         }
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# -----------------------------------------------------------------------------
+# 2b. Adicionar conta de BOT (token do BotFather)
+# -----------------------------------------------------------------------------
+_BOT_TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{20,}$")
+
+
+@app.post("/api/add-bot")
+async def add_bot(
+    body: AddBotRequest,
+    _user: dict = Depends(verify_pb_auth),
+):
+    """
+    Cria uma sessão a partir de um token de bot (BotFather).
+
+    Reaproveita todo o fluxo das contas de usuário: arquivo de credencial,
+    record em `telegram_sessions` (com `owner`), webhooks e histórico em
+    `telegram_messages`. O `phone` do bot é sintético (`bot:<id>`) pra
+    respeitar o índice UNIQUE da collection.
+    """
+    token = body.bot_token.strip()
+    if not _BOT_TOKEN_RE.match(token):
+        raise HTTPException(status_code=400, detail="Token de bot inválido.")
+
+    caller_id, _ = _auth_user(_user)
+    client = TelegramClient(
+        StringSession(),
+        API_ID,
+        API_HASH,
+        device_model="Telegram-Webhook-Service",
+    )
+
+    try:
+        try:
+            await client.start(bot_token=token)
+            me = await client.get_me()
+        except Exception as e:
+            await client.disconnect()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Não foi possível autenticar o bot: {e}",
+            )
+
+        final_session_id = f"bot_{me.id}"
+        phone = f"bot:{me.id}"
+
+        if await _check_session_conflict(final_session_id, caller_id):
+            await client.disconnect()
+            raise HTTPException(
+                status_code=409,
+                detail="Este bot já está vinculado a outro usuário.",
+            )
+
+        save_session(final_session_id, client.session.save(), phone, owner_id=caller_id)
+        try:
+            await register_account_pb(
+                final_session_id,
+                phone,
+                caller_id,
+                body.name or (f"@{me.username}" if me.username else None),
+            )
+        except HTTPException:
+            delete_session_file(final_session_id)
+            await client.disconnect()
+            raise
+
+        old = active_clients.get(final_session_id)
+        if old is not None and old is not client:
+            try:
+                await old.disconnect()
+            except Exception:
+                pass
+        active_clients[final_session_id] = client
+        register_message_handler(client, final_session_id)
+
+        return {
+            "success": True,
+            "session_id": final_session_id,
+            "username": me.username,
+            "message": "Bot adicionado com sucesso!",
+        }
     except HTTPException:
         raise
     except Exception as e:
