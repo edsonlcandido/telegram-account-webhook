@@ -6,7 +6,8 @@ import pb from './pocketbase'
 // proxy via hook. CORS no FastAPI ja aceita o dominio publico do frontend.
 // Inclui o prefixo /api porque as rotas do FastAPI sao /api/send-code,
 // /api/sessions, etc.
-const apiUrl = 'https://api-telegram.ehtudo.app/api'
+// Base vem da env var TELEGRAM_API_URL (build-time); sem ela, cai no default.
+const apiUrl = `${(import.meta.env.TELEGRAM_API_URL || 'https://api-telegram.ehtudo.app').replace(/\/+$/, '')}/api`
 
 // =============================================================================
 // Tipos
@@ -66,6 +67,13 @@ export interface SendCodeResponse {
   session_id: string
   phone_code_hash: string
   expires: number
+}
+
+export interface AddBotResponse {
+  success: boolean
+  session_id: string
+  username: string | null
+  message: string
 }
 
 export interface VerifyCodeResponse {
@@ -228,6 +236,13 @@ export const telegramApi = {
         // `two_factor_required` na 1ª tentativa).
         password: password || undefined,
       }),
+    })
+  },
+
+  async addBot(botToken: string, name?: string): Promise<AddBotResponse> {
+    return request<AddBotResponse>('/add-bot', {
+      method: 'POST',
+      body: JSON.stringify({ bot_token: botToken, name: name || undefined }),
     })
   },
 

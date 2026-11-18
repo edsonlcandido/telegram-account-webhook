@@ -46,6 +46,10 @@ COPY apps/web/src ./apps/web/src/
 COPY apps/web/index.html ./apps/web/
 COPY apps/web/public ./apps/web/public/
 
+# URL pública do Telegram API (embutida no bundle em build-time)
+ARG TELEGRAM_API_URL
+ENV TELEGRAM_API_URL=$TELEGRAM_API_URL
+
 # Instalar e buildar
 RUN cd apps/web && npm install && npm run build
 

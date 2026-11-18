@@ -134,6 +134,7 @@
               </h3>
               <p class="text-gray-500 text-sm mt-1">Gerencie suas contas vinculadas</p>
             </div>
+            <div class="flex flex-col gap-2 sm:flex-row">
             <button
               @click="router.push('/add-telegram')"
               class="w-full sm:w-auto inline-flex items-center justify-center px-5 py-2.5 sm:px-6 sm:py-3 bg-brand-500 text-white font-bold rounded-xl hover:bg-brand-600 transition-all transform hover:scale-105 shadow-lg text-sm sm:text-base"
@@ -141,6 +142,14 @@
               <PlusIcon class="h-5 w-5 mr-2" />
               Adicionar Conta
             </button>
+            <button
+              @click="router.push('/add-bot')"
+              class="w-full sm:w-auto inline-flex items-center justify-center px-5 py-2.5 sm:px-6 sm:py-3 bg-white text-brand-600 border border-brand-500 font-bold rounded-xl hover:bg-brand-50 transition-all shadow-lg text-sm sm:text-base"
+            >
+              <PlusIcon class="h-5 w-5 mr-2" />
+              Adicionar Bot
+            </button>
+            </div>
           </div>
 
           <!-- Loading -->
@@ -511,6 +520,7 @@ const configuredWebhooks = computed(() => {
 
 // Format phone for display
 const formatPhone = (phone: string) => {
+  if (phone.startsWith('bot:')) return `Bot ${phone.slice(4)}`
   const cleaned = phone.replace(/\D/g, '')
   if (cleaned.length === 12) {
     return `(${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9)}`

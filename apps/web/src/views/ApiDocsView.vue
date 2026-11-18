@@ -3,6 +3,8 @@ import { computed, ref } from 'vue'
 import AppNav from '../components/AppNav.vue'
 import IntegrationTokenCard from '../components/IntegrationTokenCard.vue'
 
+const telegramApiBaseUrl = `${(import.meta.env.TELEGRAM_API_URL || 'https://api-telegram.ehtudo.app').replace(/\/+$/, '')}/api`
+
 // Blocos de payload prontos pra copiar.
 // IMPORTANTE: payloads aqui têm que refletir EXATAMENTE o que o FastAPI
 // envia no `handle_new_message` em backend/main.py. Schema atual: aninhado,
@@ -144,7 +146,7 @@ function copyIntegrationCurl() {
 }
 
 const CURL_REPLY = computed(() => `# Responde à mensagem que chegou no webhook. Requer o token PB.
-curl -X POST https://api-telegram.ehtudo.app/api/send-message \\
+curl -X POST ${telegramApiBaseUrl}/send-message \\
   -H "Content-Type: application/json" \\
   -H "Authorization: ${integrationToken.value ?? 'SEU_TOKEN_PB'}" \\
   -d '${SEND_MESSAGE_PAYLOAD.replace(/\n/g, '')}'`)
@@ -391,7 +393,7 @@ async function copy(key: string, text: string) {
           <div>
             <p class="font-semibold text-gray-800 mb-2">Request</p>
             <div class="bg-gray-50 rounded-xl p-3 text-xs font-mono text-gray-700 mb-3">
-              POST https://api-telegram.ehtudo.app/api/send-message<br />
+              POST {{ telegramApiBaseUrl }}/send-message<br />
               Content-Type: application/json<br />
               Authorization: &lt;token PB&gt;
             </div>
