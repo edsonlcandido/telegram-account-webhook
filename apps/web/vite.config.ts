@@ -19,6 +19,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [vue()],
     base: '/app/',
+    // Expõe TELEGRAM_API_URL (env var do build) ao frontend
+    envPrefix: ['VITE_', 'TELEGRAM_API_URL'],
     server: {
       // Proxy dinâmico - usa VITE_POCKETBASE_URL ou fallback para localhost
       // Redireciona requisições /api e /_ para o PocketBase
