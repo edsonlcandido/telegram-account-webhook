@@ -146,7 +146,7 @@ function copyIntegrationCurl() {
 }
 
 const CURL_REPLY = computed(() => `# Responde à mensagem que chegou no webhook. Requer o token PB.
-curl -X POST ${telegramApiBaseUrl}/api/send-message \\
+curl -X POST ${telegramApiBaseUrl}/send-message \\
   -H "Content-Type: application/json" \\
   -H "Authorization: ${integrationToken.value ?? 'SEU_TOKEN_PB'}" \\
   -d '${SEND_MESSAGE_PAYLOAD.replace(/\n/g, '')}'`)
@@ -393,7 +393,7 @@ async function copy(key: string, text: string) {
           <div>
             <p class="font-semibold text-gray-800 mb-2">Request</p>
             <div class="bg-gray-50 rounded-xl p-3 text-xs font-mono text-gray-700 mb-3">
-              POST {{ telegramApiBaseUrl }}/api/send-message<br />
+              POST {{ telegramApiBaseUrl }}/send-message<br />
               Content-Type: application/json<br />
               Authorization: &lt;token PB&gt;
             </div>
