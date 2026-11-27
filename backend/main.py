@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, AnyHttpUrl
+from pydantic import BaseModel, AnyHttpUrl, Field
 from telethon import TelegramClient
 from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
 from telethon.events import NewMessage
@@ -290,6 +290,7 @@ class CreateWebhookRequest(BaseModel):
     name: Optional[str] = None
     url: str
     enabled: bool = True
+    priority: int = Field(default=100, ge=0)
     filter_direction: str = "all"  # all | incoming | outgoing
     filter_chat_type: str = "all"  # all | private | group | supergroup | channel
     filter_text_match_operator: str = "none"  # none | equals | contains
@@ -304,6 +305,7 @@ class UpdateWebhookRequest(BaseModel):
     name: Optional[str] = None
     url: Optional[str] = None
     enabled: Optional[bool] = None
+    priority: Optional[int] = Field(default=None, ge=0)
     filter_direction: Optional[str] = None
     filter_chat_type: Optional[str] = None
     filter_text_match_operator: Optional[str] = None
@@ -859,6 +861,13 @@ async def handle_new_message(event, session_id: str):
             webhooks = []
         else:
             webhooks = r.json().get("items", [])
+            webhooks = sorted(
+                webhooks,
+                key=lambda wh: (
+                    wh.get("priority") if isinstance(wh.get("priority"), (int, float)) else 100,
+                    wh.get("created") or "",
+                ),
+            )
 
         # 5) Filtra e distribui
         # Anti-loop + dedupe: se a mensagem foi enviada por NÓS mesmos
@@ -1886,6 +1895,13 @@ async def list_session_webhooks(
                 headers=pb_service_headers(),
             )
         items = r.json().get("items", [])
+        items = sorted(
+            items,
+            key=lambda wh: (
+                wh.get("priority") if isinstance(wh.get("priority"), (int, float)) else 100,
+                wh.get("created") or "",
+            ),
+        )
         for w in items:
             w["session_id"] = session_id
         return {"webhooks": items}
@@ -1933,6 +1949,7 @@ async def create_webhook(
         "name": name,
         "url": request.url,
         "enabled": request.enabled,
+        "priority": max(0, request.priority),
         "filter_direction": request.filter_direction,
         "filter_chat_type": request.filter_chat_type,
         "filter_text_match_operator": request.filter_text_match_operator,
@@ -1953,7 +1970,17 @@ async def create_webhook(
                 headers=pb_service_headers(),
             )
         if r.status_code >= 300:
-            raise HTTPException(400, f"PB recusou: {r.text}")
+            if "priority" in payload:
+                retry_payload = dict(payload)
+                retry_payload.pop("priority", None)
+                async with httpx.AsyncClient(timeout=10.0) as retry_client:
+                    r = await retry_client.post(
+                        f"{POCKETBASE_URL}/api/collections/telegram_webhooks/records",
+                        json=retry_payload,
+                        headers=pb_service_headers(),
+                    )
+            if r.status_code >= 300:
+                raise HTTPException(400, f"PB recusou: {r.text}")
         result = r.json()
         result["session_id"] = session_id
         return result
@@ -1982,6 +2009,8 @@ async def update_webhook(
     # não manda o campo no PATCH — evita o PB recusar a escrita.
     if "secret" in payload and "secret" not in webhook:
         payload.pop("secret", None)
+    if "priority" in payload and "priority" not in webhook:
+        payload.pop("priority", None)
 
     try:
         await _ensure_pb_service_token()

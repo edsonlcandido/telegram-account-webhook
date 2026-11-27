@@ -33,6 +33,7 @@ interface FormState {
   name: string
   url: string
   enabled: boolean
+  priority: number
   filter_direction: FilterDirection
   filter_chat_type: FilterChatType
   filter_text_match_operator: FilterTextMatchOperator
@@ -48,6 +49,7 @@ const form = reactive<FormState>({
   name: '',
   url: '',
   enabled: true,
+  priority: 100,
   filter_direction: 'all',
   filter_chat_type: 'all',
   filter_text_match_operator: 'none',
@@ -132,6 +134,7 @@ function openCreateModal() {
   form.name = ''
   form.url = ''
   form.enabled = true
+  form.priority = 100
   form.filter_direction = 'all'
   form.filter_chat_type = 'all'
   form.filter_text_match_operator = 'none'
@@ -146,6 +149,7 @@ function openEditModal(wh: Webhook) {
   form.name = wh.name
   form.url = wh.url
   form.enabled = wh.enabled
+  form.priority = wh.priority ?? 100
   form.filter_direction = wh.filter_direction
   form.filter_chat_type = wh.filter_chat_type
   form.filter_text_match_operator = wh.filter_text_match_operator
@@ -207,6 +211,7 @@ async function saveForm() {
       name: form.name.trim() || undefined,
       url: form.url.trim(),
       enabled: form.enabled,
+      priority: form.priority,
       filter_direction: form.filter_direction,
       filter_chat_type: form.filter_chat_type,
       filter_text_match_operator: form.filter_text_match_operator,
@@ -380,6 +385,9 @@ async function executeRemove() {
                 </span>
               </div>
               <p class="text-xs text-gray-500 font-mono truncate">{{ wh.url }}</p>
+              <p class="text-xs text-gray-600 mt-1">
+                <span class="font-medium">Prioridade:</span> {{ wh.priority ?? 100 }}
+              </p>
               <p class="text-xs text-gray-600 mt-2">
                 <span class="font-medium">Filtro:</span> {{ filterSummary(wh) }}
               </p>
@@ -528,6 +536,21 @@ async function executeRemove() {
                   :disabled="form.saving"
                 />
                 <label for="enabled" class="text-sm text-gray-700">Webhook ativo</label>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Prioridade</label>
+                <input
+                  v-model.number="form.priority"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none"
+                  :disabled="form.saving"
+                />
+                <p class="mt-1 text-xs text-gray-500">
+                  Menor valor é verificado primeiro. Webhooks com a mesma prioridade são ordenados pela data de criação.
+                </p>
               </div>
 
               <div class="border-t border-gray-200 pt-4">
