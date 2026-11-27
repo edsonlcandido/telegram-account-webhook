@@ -112,10 +112,15 @@ POCKETBASE_ADMIN_PASSWORD=...                # Auto-refresh: re-autentica 5min a
   - Credencial `StringSession` **NÃO** fica aqui — só no `/app/sessions/*.json`.
   - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container (single-app).
   - `owner` é nullable: sessão legada fica sem dono (invisível pra todo mundo) até o admin reatribuir no Admin UI do PB. `cascadeDelete` → apagar o usuário apaga a sessão (cascateia em webhooks/mensagens).
-- `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match)
+- `telegram_webhooks`: name, enabled, url + filtros (direction, chat_type, text_match) + **secret** (opcional, texto até 128 chars)
   - Relation com `telegram_sessions` (cascadeDelete). Vários webhooks por sessão.
   - **Esta é a lista que o FastAPI consulta no `handle_new_message` pra fazer o forwarding.**
   - **Não tem campo de dono** — o dono é derivado da sessão (`session.owner`).
+  - **`secret`**: quando preenchido, a entrega leva o header `X-Webhook-Secret`
+    (helper `_webhook_headers` no `backend/main.py`). Vazio = nenhum header
+    (compatibilidade: os receivers atuais esperam o payload cru). É do DONO do
+    webhook — a rule `session.owner = @request.auth.id` impede outro cliente de
+    ler o segredo alheio.
 - `telegram_messages`: audit log. Append-only (updateRule/deleteRule = null). Schema: `session` (relation), `telegram_message_id` (id da msg no Telegram, `event.id`; único **por chat**, `0` = registro legado sem o campo), `chat_id`, `chat_type`, `chat_title`, `direction` (incoming|outgoing), `sender_id`, `sender_name`, `sender_username` (@username sem @, opcional), `text`, `created`. Índice composto `(session, chat_id, telegram_message_id)` — NON-unique de propósito, o mesmo `message_id` reaparece em cada chat novo. O FastAPI insere TODA mensagem (incoming + outgoing) que chega via Telethon. O hook do PB é no-op (não duplica o forwarding).
   - **Não tem campo de dono** — o dono é derivado da sessão (`session.owner`).
 
@@ -145,6 +150,26 @@ Regras pra não furar o isolamento:
 - Sessão sem `owner` = invisível pra todo mundo (rules negam). O forwarding dos
   webhooks NÃO depende de dono — a conta continua ativa, só o painel não lista.
   Reatribuição é manual no Admin UI do PB (sem reiniciar container).
+
+### Header de segredo do webhook (`X-Webhook-Secret`)
+
+O POST de entrega vai **sem credencial** por padrão. O dono do webhook pode
+definir um `secret` — aí **toda entrega** (e o POST de teste) leva o header
+`X-Webhook-Secret: <valor>`, permitindo ao receptor provar que o request veio
+daqui.
+
+- **Fonte única**: `_webhook_headers(webhook)` em `backend/main.py`. Usado na
+  entrega (`handle_new_message`) E no `/api/webhooks/{id}/test` — os dois têm
+  que mandar o MESMO header, senão o botão "Testar" mente sobre a config.
+- **Nunca logar** o valor do segredo.
+- **Webhook sem `secret` não recebe header nenhum** → zero breaking change pros
+  receivers que já existem.
+- **Ordem de deploy**: a migration `add_webhook_secret` pode ir antes do
+  backend (ela só adiciona um campo opcional). O backend novo tolera o campo
+  ausente (`wh.get("secret")` → None → nenhum header).
+- **O nome do header é fixo** (`WEBHOOK_SECRET_HEADER` em `backend/main.py`) —
+  qualquer cliente configura sem adivinhar. Quem precisar de outro nome usa o
+  path da URL do webhook.
 
 ## API Backend
 

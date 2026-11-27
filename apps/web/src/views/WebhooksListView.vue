@@ -37,6 +37,7 @@ interface FormState {
   filter_chat_type: FilterChatType
   filter_text_match_operator: FilterTextMatchOperator
   filter_text_match_value: string
+  secret: string
   saving: boolean
   testing: boolean
   testResult: { ok: boolean; status: number } | null
@@ -51,10 +52,18 @@ const form = reactive<FormState>({
   filter_chat_type: 'all',
   filter_text_match_operator: 'none',
   filter_text_match_value: '',
+  secret: '',
   saving: false,
   testing: false,
   testResult: null,
 })
+
+// Nome do header que o backend envia quando o webhook tem segredo.
+// O mesmo que o backend usa (backend/main.py → WEBHOOK_SECRET_HEADER).
+const SECRET_HEADER = 'X-Webhook-Secret'
+
+// Feedback visual do botão "copiar"
+const copied = ref(false)
 
 // Modal de confirmar remover
 const confirmRemove = reactive<{
@@ -127,6 +136,7 @@ function openCreateModal() {
   form.filter_chat_type = 'all'
   form.filter_text_match_operator = 'none'
   form.filter_text_match_value = ''
+  form.secret = ''
   form.testResult = null
   form.open = true
 }
@@ -140,8 +150,43 @@ function openEditModal(wh: Webhook) {
   form.filter_chat_type = wh.filter_chat_type
   form.filter_text_match_operator = wh.filter_text_match_operator
   form.filter_text_match_value = wh.filter_text_match_value
+  form.secret = wh.secret || ''
   form.testResult = null
   form.open = true
+}
+
+// =============================================================================
+// Segredo (header X-Webhook-Secret)
+// =============================================================================
+
+/** Gera um segredo aleatório (64 chars hex) no browser. */
+function generateSecret() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  form.secret = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** Copia um texto pra clipboard e mostra o feedback por 1.5s. */
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  } catch {
+    // clipboard bloqueado pelo browser — o valor segue visível no campo
+  }
+}
+
+/** Mascara o segredo pra exibição: mostra as pontas, esconde o miolo. */
+function maskSecret(value: string): string {
+  if (!value) return ''
+  if (value.length <= 8) return '•'.repeat(value.length)
+  return `${value.slice(0, 4)}${'•'.repeat(8)}${value.slice(-4)}`
+}
+
+/** Segredo do webhook como string (o campo é opcional no tipo). */
+function secretOf(wh: Webhook): string {
+  return wh.secret || ''
 }
 
 function closeForm() {
@@ -166,6 +211,8 @@ async function saveForm() {
       filter_chat_type: form.filter_chat_type,
       filter_text_match_operator: form.filter_text_match_operator,
       filter_text_match_value: form.filter_text_match_operator === 'none' ? '' : form.filter_text_match_value.trim(),
+      // Vazio = sem segredo (create) / remove o segredo (update).
+      secret: form.secret.trim(),
     }
     if (form.webhookId) {
       const updatePayload: UpdateWebhookInput = payload
@@ -189,9 +236,15 @@ async function testForm() {
   form.testResult = null
   try {
     // Pra testar antes de salvar, mandamos direto na URL (sem auth no PB)
+    // — mas com o MESMO header de segredo que a entrega real vai usar.
+    // Sem isso, o teste falharia contra receiver que exige o header.
+    const secret = form.secret.trim()
     const r = await fetch(form.url.trim(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(secret ? { [SECRET_HEADER]: secret } : {}),
+      },
       body: JSON.stringify({
         type: 'test',
         message: 'Conexão OK!',
@@ -330,6 +383,21 @@ async function executeRemove() {
               <p class="text-xs text-gray-600 mt-2">
                 <span class="font-medium">Filtro:</span> {{ filterSummary(wh) }}
               </p>
+              <div v-if="secretOf(wh)" class="flex items-center gap-2 mt-2">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  Segredo
+                </span>
+                <code class="text-xs font-mono text-gray-500">{{ maskSecret(secretOf(wh)) }}</code>
+                <button
+                  @click="copyText(secretOf(wh))"
+                  class="text-xs px-2 py-0.5 border border-gray-300 text-gray-600 rounded hover:bg-gray-50 font-medium"
+                >
+                  {{ copied ? 'Copiado!' : 'Copiar' }}
+                </button>
+              </div>
             </div>
             <div class="flex flex-col gap-2 flex-shrink-0">
               <button
@@ -411,6 +479,43 @@ async function executeRemove() {
                 />
                 <p v-if="form.url && !form.url.startsWith('http')" class="mt-1 text-xs text-red-500">
                   URL deve começar com http:// ou https://
+                </p>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                  Segredo (header <code class="font-mono text-xs">X-Webhook-Secret</code>)
+                </label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="form.secret"
+                    type="text"
+                    maxlength="128"
+                    placeholder="vazio = sem segredo"
+                    class="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-brand-500 focus:outline-none font-mono text-sm"
+                    :disabled="form.saving"
+                  />
+                  <button
+                    @click="generateSecret"
+                    type="button"
+                    :disabled="form.saving"
+                    class="px-3 py-3 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Gerar
+                  </button>
+                  <button
+                    @click="copyText(form.secret)"
+                    type="button"
+                    :disabled="form.saving"
+                    class="px-3 py-3 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {{ copied ? 'Copiado!' : 'Copiar' }}
+                  </button>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">
+                  Se preenchido, toda entrega deste webhook leva o header
+                  <code class="font-mono">X-Webhook-Secret</code> com esse valor — use o mesmo valor no
+                  receiver pra validar que o request veio daqui. Vazio = nenhum header é enviado.
                 </p>
               </div>
 
