@@ -75,6 +75,35 @@ _PB_REFRESH_MARGIN_SEC = 300  # 5 min
 SESSIONS_DIR = Path("/app/sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
 
+# =============================================================================
+# Header de segredo do webhook
+# =============================================================================
+# Nome do header enviado em TODA entrega de webhook cujo record tenha o campo
+# `secret` preenchido. O receiver compara o valor com o que o dono do webhook
+# configurou — é o que permite ao receiver provar que o request veio daqui.
+#
+# Webhook SEM `secret` não recebe o header nenhum: os receivers atuais
+# continuam recebendo o payload idêntico (zero breaking change).
+# =============================================================================
+WEBHOOK_SECRET_HEADER = "X-Webhook-Secret"
+
+
+def _webhook_headers(webhook: dict) -> dict:
+    """Headers da entrega de um webhook.
+
+    Webhook com `secret` preenchido → recebe o header `X-Webhook-Secret` com
+    o valor, que é o que permite ao receiver provar que o request veio daqui.
+
+    Webhook SEM `secret` → nenhum header. Os receivers atuais continuam
+    recebendo o payload idêntico (zero breaking change).
+
+    Fonte única de verdade: usada tanto na entrega real (`handle_new_message`)
+    quanto no POST de teste (`/api/webhooks/{id}/test`) — os dois precisam
+    mandar o MESMO header, senão o "testar" mente sobre a configuração.
+    """
+    secret = (webhook.get("secret") or "").strip()
+    return {WEBHOOK_SECRET_HEADER: secret} if secret else {}
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -265,6 +294,10 @@ class CreateWebhookRequest(BaseModel):
     filter_chat_type: str = "all"  # all | private | group | supergroup | channel
     filter_text_match_operator: str = "none"  # none | equals | contains
     filter_text_match_value: Optional[str] = None
+    # Segredo do webhook: se preenchido, toda entrega leva o header
+    # `X-Webhook-Secret` com esse valor. Vazio/ausente = nenhum header
+    # (compatibilidade com os receivers que esperam o payload cru).
+    secret: Optional[str] = None
 
 
 class UpdateWebhookRequest(BaseModel):
@@ -275,6 +308,9 @@ class UpdateWebhookRequest(BaseModel):
     filter_chat_type: Optional[str] = None
     filter_text_match_operator: Optional[str] = None
     filter_text_match_value: Optional[str] = None
+    # `secret=""` (string vazia) REMOVE o segredo do webhook. Ausente/None
+    # = não mexe no segredo. Rotacionar = mandar um valor novo.
+    secret: Optional[str] = None
 
 
 class ToggleWebhookRequest(BaseModel):
@@ -901,8 +937,13 @@ async def handle_new_message(event, session_id: str):
             }
 
             try:
+                # Header de segredo: enviado SÓ se o webhook tiver `secret`
+                # preenchido. Webhook sem segredo continua recebendo o payload
+                # idêntico de sempre (zero breaking change pros receivers).
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url, json=payload)
+                    resp = await client.post(
+                        url, json=payload, headers=_webhook_headers(wh)
+                    )
                 if 200 <= resp.status_code < 300:
                     delivered += 1
                     logger.info(
@@ -1897,6 +1938,12 @@ async def create_webhook(
         "filter_text_match_operator": request.filter_text_match_operator,
         "filter_text_match_value": request.filter_text_match_value or "",
     }
+    # Segredo: só entra no payload se o dono preencheu. Webhook sem segredo
+    # não recebe o header `X-Webhook-Secret` na entrega — os receivers atuais
+    # continuam recebendo o payload idêntico.
+    secret = (request.secret or "").strip()
+    if secret:
+        payload["secret"] = secret
     try:
         await _ensure_pb_service_token()
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1930,6 +1977,11 @@ async def update_webhook(
 
     caller_id, _ = _auth_user(_user)
     webhook = await _assert_webhook_owned(webhook_id, caller_id)
+
+    # Se o record não tem a chave `secret` (migration ainda não aplicada),
+    # não manda o campo no PATCH — evita o PB recusar a escrita.
+    if "secret" in payload and "secret" not in webhook:
+        payload.pop("secret", None)
 
     try:
         await _ensure_pb_service_token()
@@ -2025,6 +2077,9 @@ async def test_webhook_endpoint(
         if not url:
             raise HTTPException(400, "Webhook sem URL")
 
+        # O POST de teste leva o MESMO header de segredo da entrega real.
+        # Sem isso, "Testar" falharia contra qualquer receiver que exija o
+        # header — o teste mentiria sobre a configuração.
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 url,
@@ -2033,6 +2088,7 @@ async def test_webhook_endpoint(
                     "message": "Conexão OK!",
                     "timestamp": datetime.now().isoformat(),
                 },
+                headers=_webhook_headers(webhook),
             )
         return {
             "success": response.status_code == 200,

@@ -38,6 +38,15 @@ export interface Webhook {
   filter_chat_type: FilterChatType
   filter_text_match_operator: FilterTextMatchOperator
   filter_text_match_value: string
+  /**
+   * Segredo opcional do webhook. Quando preenchido, TODA entrega leva o
+   * header `X-Webhook-Secret` com esse valor — é o que permite ao receiver
+   * provar que o request veio daqui. Ausente/vazio = nenhum header.
+   *
+   * Opcional no tipo porque a collection só ganha o campo `secret` depois
+   * da migration `add_webhook_secret` — antes dela o PB não devolve a chave.
+   */
+  secret?: string
   created: string
   updated: string
 }
@@ -50,6 +59,8 @@ export interface CreateWebhookInput {
   filter_chat_type?: FilterChatType
   filter_text_match_operator?: FilterTextMatchOperator
   filter_text_match_value?: string
+  /** Vazio/ausente = webhook sem segredo (nenhum header na entrega). */
+  secret?: string
 }
 
 export interface UpdateWebhookInput {
@@ -60,6 +71,8 @@ export interface UpdateWebhookInput {
   filter_chat_type?: FilterChatType
   filter_text_match_operator?: FilterTextMatchOperator
   filter_text_match_value?: string
+  /** String vazia REMOVE o segredo do webhook. Ausente = não mexe nele. */
+  secret?: string
 }
 
 export interface SendCodeResponse {

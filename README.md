@@ -62,7 +62,7 @@ Dois serviços no Easypanel, ambos construídos a partir deste repo (`build.type
   1. Telethon recebe nova mensagem
   2. FastAPI consulta `telegram_webhooks` no PB (1 GET com filter)
   3. Aplica os filtros (direction, chat_type, text_match)
-  4. POST em cada webhook ativo com `httpx` (timeout 10s, asyncio)
+  4. POST em cada webhook ativo com `httpx` (timeout 10s, asyncio) — com o header `X-Webhook-Secret` quando o webhook tem `secret` preenchido
   5. Faz INSERT em `telegram_messages` (audit log; PB hook é no-op)
 - O **PocketBase** (serviço Application) só armazena dados — não faz forwarding. O hook `onRecordAfterCreateSuccess` em `pb_hooks/main.pb.js` é **no-op** (loga o INSERT mas não dispara HTTP). Razão: o container do PB no Easypanel pode ter egress restrito pra certos IPs externos (network ACL); o container do FastAPI/Telethon tem egress liberado (fala com Telegram API, PB, e IPs externos sem problema).
 - O **FastAPI** autentica no PB via **service token** (POCKETBASE_SERVICE_TOKEN ou POCKETBASE_ADMIN_EMAIL+PASSWORD). Usado pra TODAS as chamadas internas — INSERT em audit, lookup de sessão, listagem de webhooks. User JWT normal só pros endpoints autenticados do frontend.
@@ -223,8 +223,8 @@ Os tokens ficam nas configs de cada serviço no painel do Easypanel e nunca no r
 | `DELETE` | `/api/session/{session_id}` | sim | Remove sessão (desconecta + apaga arquivo) |
 | `PATCH` | `/api/sessions/{session_id}` | sim | Renomeia sessão (`name`) |
 | `GET` | `/api/sessions/{session_id}/webhooks` | sim | Lista webhooks da sessão |
-| `POST` | `/api/sessions/{session_id}/webhooks` | sim | Cria webhook (com filtros) |
-| `PATCH` | `/api/webhooks/{webhook_id}` | sim | Edita webhook (URL, filtros, enabled) |
+| `POST` | `/api/sessions/{session_id}/webhooks` | sim | Cria webhook (com filtros e `secret` opcional) |
+| `PATCH` | `/api/webhooks/{webhook_id}` | sim | Edita webhook (URL, filtros, enabled, `secret`) |
 | `DELETE` | `/api/webhooks/{webhook_id}` | sim | Remove webhook |
 | `POST` | `/api/webhooks/{webhook_id}/toggle` | sim | Liga/desliga sem deletar |
 | `POST` | `/api/webhooks/{webhook_id}/test` | sim | Dispara evento de teste (payload completo) |
@@ -361,6 +361,48 @@ não resolve — não martela o `getDialogs` a cada mensagem.
 - `chat.participants_count`: count de membros do grupo/canal. `null` em chat privado.
 
 **Anti-loop:** o handler suprime forwarding (mas NÃO o audit log em `telegram_messages`) pra mensagens que a própria API enviou via `/api/send-message` nos últimos 10s, evitando loop com o receptor do webhook (ex: n8n respondendo às nossas mensagens).
+
+---
+
+### Header de segredo (`X-Webhook-Secret`)
+
+O POST de entrega vai **sem credencial nenhuma** por padrão — é o contrato atual do
+forwarding. Quem configurou o webhook (o dono da sessão) pode definir um **segredo**
+por webhook; nesse caso **toda entrega** — e também o POST de teste
+(`/api/webhooks/{id}/test`) — leva o header:
+
+```
+X-Webhook-Secret: <valor>
+```
+
+O receptor compara o valor com o que foi configurado. É o que permite ao receptor
+**provar que o request veio daqui** (e não ser um POST forjado de qualquer origem
+que descobriu a URL).
+
+| Cenário | Header enviado? |
+|---|---|
+| Webhook com `secret` preenchido | ✅ `X-Webhook-Secret: <valor>` |
+| Webhook sem `secret` | ❌ nenhum header (compatibilidade: o payload segue idêntico) |
+
+Como configurar:
+
+- **Na tela** (`/webhooks/:sessionId`): campo "Segredo" no modal, com botão **Gerar**
+  (token aleatório de 64 chars) e **Copiar**. O valor fica mascarado na lista.
+- **Na API**: `POST /api/sessions/{session_id}/webhooks` com `{"secret": "..."}`
+  (ou `PATCH /api/webhooks/{id}` com `{"secret": ""}` pra remover).
+
+Regras:
+
+- O segredo é **do dono do webhook** — a collection `telegram_webhooks` tem
+  `listRule = session.owner = @request.auth.id`, então outro cliente do
+  telegram-account-webhook **não enxerga** o segredo alheio.
+- Rotacionar = mandar um valor novo no `PATCH` (o receiver precisa ser atualizado).
+- O valor **nunca é logado** pelo backend.
+- O nome do header é fixo (`X-Webhook-Secret`) pra qualquer cliente configurar
+  sem adivinhar; se precisar de outro nome, use o path da URL do webhook.
+
+> ⚠️ O `POST /api/webhooks/{id}/test` (botão "Testar" na tela) usa o **mesmo**
+> helper de headers da entrega real — então o teste reflete a configuração de verdade.
 
 ---
 
@@ -531,7 +573,7 @@ curl -X POST https://api-telegram.ehtudo.app/api/integration-token \
 - `telegram_sessions`: `phone`, `session_id` (chave do arquivo de credencial), `name` (apelido opcional editável), **`owner`** (relation → `users` = dono da sessão).
   - **`StringSession` (credencial) NÃO fica aqui** — só no `/app/sessions/*.json` no container `telegram-account-webhook-telegram`.
   - Credenciais do app Telegram (`api_id`/`api_hash`) ficam nos env vars do container, não no PB.
-- `telegram_webhooks`: `name`, `enabled`, `url` + filtros (`direction`, `chat_type`, `text_match`).
+- `telegram_webhooks`: `name`, `enabled`, `url` + filtros (`direction`, `chat_type`, `text_match`) + **`secret`** (opcional — segredo do webhook, ver "Header de segredo (`X-Webhook-Secret`)").
   - Relation com `telegram_sessions` (`cascadeDelete`). Vários webhooks por sessão.
   - O PB é source of truth — o arquivo é só pra carregar o cliente Telethon de volta no boot.
   - **Não tem campo de dono próprio**: o dono é derivado da sessão (`session.owner`).
