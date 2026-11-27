@@ -34,6 +34,7 @@ export interface Webhook {
   name: string
   url: string
   enabled: boolean
+  priority: number
   filter_direction: FilterDirection
   filter_chat_type: FilterChatType
   filter_text_match_operator: FilterTextMatchOperator
@@ -55,6 +56,7 @@ export interface CreateWebhookInput {
   name?: string
   url: string
   enabled?: boolean
+  priority?: number
   filter_direction?: FilterDirection
   filter_chat_type?: FilterChatType
   filter_text_match_operator?: FilterTextMatchOperator
@@ -67,6 +69,7 @@ export interface UpdateWebhookInput {
   name?: string
   url?: string
   enabled?: boolean
+  priority?: number
   filter_direction?: FilterDirection
   filter_chat_type?: FilterChatType
   filter_text_match_operator?: FilterTextMatchOperator
